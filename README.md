@@ -107,16 +107,24 @@ pnpm tauri dev          # 开发模式（热更新；自动拉起 Vite）
 宠物默认出现在**屏幕右上角**。首次运行会自动在
 `%APPDATA%\com.whalepet.desktop\` 下生成配置与两条示例动画。
 
-### 2.3 构建可执行文件
+### 2.3 构建可执行文件与安装包
 
 ```powershell
 pnpm tauri build --no-bundle     # 只产 exe：src-tauri\target\release\whale-pet-desktop.exe
+pnpm tauri build                 # 连安装包一起出：bundle\nsis\*.exe 与 bundle\msi\*.msi
 ```
 
-> ⚠️ 本机沙箱**无法**产出 `.msi` / NSIS 安装包：Tauri 打包时需要从 GitHub 下载
-> NSIS/WiX，而本机所有依赖系统 Schannel 的 HTTPS 请求都会失败。
-> `tauri.conf.json` 里已经把 `bundle.targets` 配好（`nsis` + `msi`），
-> 在能联网的机器上去掉 `--no-bundle` 即可直接出安装包。
+> 本机（这台开发机）没有把 Tauri CLI 装进 `node_modules`（依赖刻意只留 vite + typescript），
+> CLI 走 `D:\tools\Tauri\nodejs\tauri.cmd`；直接用它也是一样的：
+>
+> ```powershell
+> & 'D:\tools\Tauri\nodejs\tauri.cmd' build
+> ```
+>
+> **安装包已于 v0.1.0 首次产出**（NSIS 2.91 MB / MSI 4.13 MB，本机实测），
+> 下载见 [Releases](https://github.com/clover-us/sakura/releases)。
+> 安装包**未做代码签名**，Windows 可能提示「未知发布者」。
+> NSIS 的安装向导图标由 `bundle.windows.nsis.installerIcon` 指定（否则会是 NSIS 默认图标）。
 
 ### 2.4 导入完整动画素材（106 条）
 
@@ -366,7 +374,7 @@ M2 / M2.5 探针的证据见第 9 / 10 节。
 
 | 限制 | 说明 | 计划 |
 | --- | --- | --- |
-| 本机无法产出安装包 | 沙箱里只有 cargo 的 crates 通道能通，Tauri CLI 下载打包器（NSIS/WiX）不通。`cargo build --release` 的二进制已实跑（含生产 CSP） | 在能联网的机器上直接出包 |
+| ~~本机无法产出安装包~~ | **已解决**：网络恢复后 `tauri build` 成功产出 NSIS + MSI（v0.1.0，见 VERIFICATION 第 14 节） | — |
 | `cargo test` 跑不起来 | GNU 工具链下 libtest 可执行文件被加载器拒绝（`0xC0000139`，导入表与主程序一致，属环境问题）。改用 `cargo run --bin logic-smoke` | 换 MSVC 工具链或在正常环境跑 |
 | 仅 Windows | 透明窗/穿透/DPI 都按 Windows 验证 | macOS 需 `.mov` 素材 + 签名公证；Linux 合成器差异大 |
 | 多显示器跨屏抛掷未做观感回归 | 本机只有一块屏（几何/校验/放行逻辑已就位） | 需双屏机器回归一次 |

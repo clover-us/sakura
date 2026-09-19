@@ -1517,7 +1517,7 @@ Vite 的 watcher 在 Windows 上会遇到"编辑器/脚本做原子写留下的
 | 托盘图标的**真实点击** | 注不进去（本机鼠标注入不可靠，见 6.4）。覆盖到"菜单项 → 动作"这一层为止；**未覆盖**：muda 把系统点击派发进来这一步，以及托盘菜单的视觉/级联层级（系统原生菜单，不经 webview，本机也没有可靠截图手段） |
 | 高 DPI（125% / 150%） | 仍是单屏 100%（DPR=1），与 M1 相同，未变 |
 | 多显示器 | 仍是单屏，未变 |
-| 安装包（NSIS / MSI） | 仍未产出（本机 Tauri CLI 下载打包器不通）。**release 二进制已实跑**（9.6） |
+| 安装包（NSIS / MSI） | **已产出**（v0.1.0 首次出包，见第 14 节）。release 二进制亦已实跑（9.6） |
 | 从 dsh-pet 一键导入 | 未实现（`ROADMAP.md` 已注明；动画素材导入已有 `scripts/import-animations.ps1`） |
 | **一次未复现的崩溃事件** | 2026-09-19 12:50:41 有一条 `Application Error`：release 二进制、异常码 `0xc0000409`（release 下 panic 走 abort 的 fail-fast 码）、进程存活 < 1 秒。之后 4 次 release 运行（无探针 / 设置窗 / 保存 / 热重载）都**没有新增事件**，未能复现，也未能与任何一次启动动作对应上。**保留为已知未解释项**：若它在真实使用中再现，应优先按"启动即崩"的路径排查（`tauri.conf.json` 嵌入资源、插件初始化顺序） |
 
@@ -2218,3 +2218,63 @@ let agent: ureq::Agent = ureq::Agent::config_builder()
 ```
 
 截图更新为 [`screenshots/chat-window.png`](screenshots/README.md)（304 宽，左侧可见六点握柄）。
+---
+
+# 14. v0.1.0 首次出包与发布（2026-09-19）
+
+## 14.1 安装包：一直记在「未能产出」的那一项，解决了
+
+之前一直写着"本机 Tauri CLI 下载打包器（NSIS/WiX）不通"。这次网络恢复后重试，**一次成功**，
+两个安装包都产出来了：
+
+```text
+Info Patching whale-pet-desktop.exe with bundle type information: nsis
+Running makensis to produce bundle\nsis\whale-pet_0.1.0_x64-setup.exe
+Downloading https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip
+Info validating hash / extracting WIX
+Running candle / light to produce bundle\msi\whale-pet_0.1.0_x64_en-US.msi
+Finished 2 bundles at: …setup.exe（2.91 MB）… en-US.msi（4.13 MB）
+```
+
+复现命令（本机 CLI 不在 `node_modules` 里，走 `D:\tools\Tauri\nodejs\tauri.cmd`）：
+
+```powershell
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build            # 出 exe + NSIS + MSI
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build --bundles nsis   # 只出 NSIS（改安装器配置时快很多）
+```
+
+## 14.2 顺带发现并修掉：安装向导用的是 NSIS 默认图标
+
+从 `setup.exe` 里抽 256px 图标核对，发现是 **NSIS 自带的默认图形**，不是我们的桌宠。
+补上配置后重新出包，再抽一次确认已经是我们的图标：
+
+```jsonc
+"bundle": { "windows": { "nsis": {
+  "installerIcon": "icons/icon.ico",
+  "uninstallerIcon": "icons/icon.ico"
+} } }
+```
+
+## 14.3 发布
+
+- 标签 **v0.1.0**（附注标签，含本版范围说明）已推到 `origin`
+- GitHub Release：<https://github.com/clover-us/sakura/releases/tag/v0.1.0>
+  - `whale-pet_0.1.0_x64-setup.exe`（NSIS，2.91 MB）
+  - `whale-pet_0.1.0_x64_en-US.msi`（4.13 MB）
+  - 两个资源的状态都是 `uploaded`（用 GitHub API 回读确认过）
+- 版本号：`Cargo.toml` / `tauri.conf.json` / `package.json` 三处都是 `0.1.0`（无版本漂移）
+
+> **v0.1.0 标签在创建后十分钟内移动过一次**（从 `f40231d` 到 `b43cd9a`），
+> 因为安装包图标修复应当属于这个版本。标签刚建、没有其他使用者，故直接 `-f` 移动并在标签说明里记了这件事；
+> 正常流程不该这么做，这里写下来是为了不藏事。
+
+## 14.4 安装包未验证的部分（诚实记录）
+
+| 项 | 状态 |
+| --- | --- |
+| 安装包**能否装成功、装完能否启动** | **未验证**：本机不能拿真实安装流程做回归（会把当前开发环境覆盖/写注册表）。已做的是：setup.exe 是有效 PE（`MZ`）、能抽出图标、体积合理；release 二进制本身已实跑（9.6） |
+| 代码签名 | **没有签名**（本机无证书）→ 用户侧会看到 SmartScreen「未知发布者」，Release 说明里已写明 |
+| 卸载是否干净 | 未验证（同上） |
+| MSI 在非中文系统上的语言 | 出的是 `en-US.msi`；NSIS 那份带 `SimpChinese` + `English` 两种语言 |
+
+下一步若要真正闭环，需要：一台干净机器（或虚拟机）实装一次 + 代码签名证书 + CI 出包流水线。
