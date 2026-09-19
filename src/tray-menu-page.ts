@@ -372,7 +372,16 @@ declare global {
   }
 }
 
+/** 显式主题覆盖（只给自检用：`?theme=dark`；深色跟随系统，本机桌面是浅色） */
+function applyThemeOverride(): void {
+  const theme = new URLSearchParams(window.location.search).get('theme');
+  if (theme === 'dark' || theme === 'light') {
+    document.documentElement.dataset.theme = theme;
+  }
+}
+
 async function bootstrap(): Promise<void> {
+  applyThemeOverride();
   setLogLabel('tray-menu');
   window.__whalePetTrayMenu = {
     show: () => {
@@ -388,7 +397,13 @@ async function bootstrap(): Promise<void> {
 async function refresh(): Promise<void> {
   try {
     state = await invoke<TrayMenuState>('get_tray_menu_state');
-    petLog(`托盘菜单: 状态已刷新（${state.pets.length} 只宠物，可见=${state.anyVisible}）`);
+    petLog(
+      // 记下**实际生效**的主题：深色跟随系统，而"强制覆盖"是给自检用的（?theme=dark）
+      `托盘菜单: 状态已刷新（${state.pets.length} 只宠物，可见=${state.anyVisible}；主题=${
+        document.documentElement.dataset.theme ??
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark(系统)' : 'light(系统)')
+      }）`,
+    );
     renderMenu();
   } catch (err) {
     panel().innerHTML = `<div class="empty">读取状态失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`;

@@ -14,47 +14,36 @@
        *   - `prefers-color-scheme` 同时给浅色与深色两套变量（同一份结构，不改布局）。
        */
       :root {
+        /* 深浅两套值写在**同一行**的两个位置（CSS `light-dark()`）：
+           少写一遍变量表，也就少一次"深色那份漏改一个变量"的机会。
+           `color-scheme` 决定取哪一边：默认跟随系统；
+           被 `data-theme` 显式指定时就用指定的那一边（调试/自检用，见 settings-page.ts 读 URL 的 ?theme=）。 */
         color-scheme: light dark;
-        --bg: #ffffff;
-        --side: #f8f8fa;
-        --card: #ffffff;
-        --text: #23262d;
-        --muted: #8b909a;
-        --line: #ececf0;
-        --line-strong: #dcdce2;
-        --input: #ffffff;
-        --hover: #f5f4f6;
-        --accent: #ec6f9b;
-        --accent-soft: #fdeef4;
-        --accent-text: #c94d7c;
-        --danger: #e5534b;
-        --danger-soft: #fdeceb;
-        --ok: #2f9e6e;
-        --warn: #b7791f;
-        --shadow: 0 10px 28px rgba(28, 20, 30, 0.1);
+        --bg: light-dark(#ffffff, #1c1e23);
+        --side: light-dark(#f8f8fa, #191b20);
+        --card: light-dark(#ffffff, #22242a);
+        --text: light-dark(#23262d, #e8e9ee);
+        --muted: light-dark(#8b909a, #9096a1);
+        --line: light-dark(#ececf0, #2f323a);
+        --line-strong: light-dark(#dcdce2, #3b3f49);
+        --input: light-dark(#ffffff, #1b1d22);
+        --hover: light-dark(#f5f4f6, #262931);
+        --accent: light-dark(#ec6f9b, #ff86ae);
+        --accent-soft: light-dark(#fdeef4, #38262e);
+        --accent-text: light-dark(#c94d7c, #ff9dc0);
+        --danger: light-dark(#e5534b, #ff7b72);
+        --danger-soft: light-dark(#fdeceb, #3a2523);
+        --ok: light-dark(#2f9e6e, #7ee787);
+        --warn: light-dark(#b7791f, #f0c674);
+        --shadow: light-dark(0 10px 28px rgba(28, 20, 30, 0.1), 0 10px 28px rgba(0, 0, 0, 0.4));
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #1c1e23;
-          --side: #191b20;
-          --card: #22242a;
-          --text: #e8e9ee;
-          --muted: #9096a1;
-          --line: #2f323a;
-          --line-strong: #3b3f49;
-          --input: #1b1d22;
-          --hover: #262931;
-          --accent: #ff86ae;
-          --accent-soft: #38262e;
-          --accent-text: #ff9dc0;
-          --danger: #ff7b72;
-          --danger-soft: #3a2523;
-          --ok: #7ee787;
-          --warn: #f0c674;
-          --shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
-        }
+      /* 显式覆盖（只在调试自检时由页面设置）：深色那套否则永远没人看过 */
+      :root[data-theme='dark'] {
+        color-scheme: dark;
       }
-      * {
+      :root[data-theme='light'] {
+        color-scheme: light;
+      }      * {
         box-sizing: border-box;
       }
       html,

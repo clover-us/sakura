@@ -15,32 +15,26 @@
        *     整个界面只有这一处彩色，视觉上才干净。
        */
       :root {
+        /* 同 settings.html：深浅两套值用 `light-dark()` 写在一行里，
+           `color-scheme` 决定取哪一边（默认跟随系统，`data-theme` 可显式覆盖）。 */
         color-scheme: light dark;
         --pad: 18px;
-        --panel: #ffffff;
-        --text: #23262d;
-        --muted: #8b909a;
-        --line: #ececf0;
-        --hover: #f7f5f7;
-        --accent: #ec6f9b;
-        --accent-soft: #fdeef4;
-        --danger: #e5534b;
-        --shadow: 0 14px 34px rgba(28, 20, 30, 0.16), 0 2px 8px rgba(28, 20, 30, 0.08);
+        --panel: light-dark(#ffffff, #24262c);
+        --text: light-dark(#23262d, #e8e9ee);
+        --muted: light-dark(#8b909a, #9096a1);
+        --line: light-dark(#ececf0, #33363e);
+        --hover: light-dark(#f7f5f7, #2d3038);
+        --accent: light-dark(#ec6f9b, #ff86ae);
+        --accent-soft: light-dark(#fdeef4, #3a2a33);
+        --danger: light-dark(#e5534b, #ff7b72);
+        --shadow: light-dark(0 14px 34px rgba(28, 20, 30, 0.16), 0 14px 34px rgba(0, 0, 0, 0.5));
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --panel: #24262c;
-          --text: #e8e9ee;
-          --muted: #9096a1;
-          --line: #33363e;
-          --hover: #2d3038;
-          --accent: #ff86ae;
-          --accent-soft: #3a2a33;
-          --danger: #ff7b72;
-          --shadow: 0 14px 34px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
-        }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
       }
-      * {
+      :root[data-theme='light'] {
+        color-scheme: light;
+      }      * {
         box-sizing: border-box;
       }
       html,

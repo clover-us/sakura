@@ -59,7 +59,13 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
 
 /// 真正建窗（在工作线程上执行）
 fn create(app: &AppHandle) -> Result<(), String> {
-    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("settings.html".into()))
+    // 自检用的显式主题（`WHALE_PET_DIAG_THEME=dark|light`）：深色那套是跟随系统的，
+// 本机桌面为浅色，不强制一次就永远没人看过它（详见 settings-page.ts 的 applyThemeOverride）
+    let page = match std::env::var("WHALE_PET_DIAG_THEME").as_deref() {
+        Ok(theme @ ("dark" | "light")) => format!("settings.html?theme={theme}"),
+        _ => "settings.html".to_string(),
+    };
+    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(page.into()))
         .title("whale-pet 设置")
         .inner_size(WIDTH, HEIGHT)
         // 低于这个尺寸表单会挤成一团（宽度低于 720 时"宠物卡片"要换行）

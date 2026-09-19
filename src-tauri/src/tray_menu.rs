@@ -57,7 +57,12 @@ pub fn prepare(app: &AppHandle) -> Result<(), String> {
     if app.get_webview_window(LABEL).is_some() {
         return Ok(());
     }
-    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("tray-menu.html".into()))
+    // 自检用的显式主题（见 settings_window.rs 的同一处说明）
+    let page = match std::env::var("WHALE_PET_DIAG_THEME").as_deref() {
+        Ok(theme @ ("dark" | "light")) => format!("tray-menu.html?theme={theme}"),
+        _ => "tray-menu.html".to_string(),
+    };
+    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(page.into()))
         // 标题在无边框窗口上看不见，但**窗口枚举/截图探针要靠它认人**（脚本按标题匹配）
         .title("whale-pet 托盘菜单")
         .inner_size(PANEL_W + SHADOW_PAD * 2.0, PANEL_H + SHADOW_PAD * 2.0)

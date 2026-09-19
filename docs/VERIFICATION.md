@@ -1829,8 +1829,68 @@ PrivateExtractIconsW(exe, 0, 256, 256) → 1 个资源
 > 与它们的 CSS 渐变底色。已用 `Select-String` 全仓搜过旧图标特征（`24.4` / `f8749f` / `ffc2db` / `25304C`），
 > 确认没有残留。
 
-## 11.7 顺带修掉的两个验证工具问题
+---
 
+# 12. 深色主题真机验证 + 崩溃压力复现（2026-09-19）
+
+第 10/11 节留下的两笔"写了但没验证"，本轮清掉。
+
+## 12.1 深色主题：从"写了没人看"到有截图
+
+**问题**：深色那一套 + `@media (prefers-color-scheme: dark)` 早就写好了，但开发机桌面是浅色，
+所以它一直处于"存在但从未被渲染过"的状态——变量漏一个、对比度不够，谁也不知道。
+
+**做法**（两层）：
+
+1. **变量表改用 CSS `light-dark()`**：深/浅两套值写在**同一行**的两个位置
+   （`--bg: light-dark(#ffffff, #1c1e23)`），`color-scheme` 决定取哪一边。
+   这样"深色那份漏改一个变量"这类错误从结构上就没了（原来是两份变量表，靠人工同步）；
+2. **加显式主题覆盖**（`?theme=dark|light`）：页面启动时读 URL 参数写 `data-theme`，
+   CSS 里 `:root[data-theme='dark'] { color-scheme: dark }` 即可强制。
+   只为自检存在，正常运行路径完全不受影响（默认仍跟随系统）。
+   Rust 侧由 `WHALE_PET_DIAG_THEME=dark` 在创建窗口时把参数带进 URL。
+
+**证据**：日志里现在会打印**生效主题**，两张截图存档。
+
+```text
+[settings]  设置: 已载入配置（1 只宠物，106 条素材；主题=dark）
+[tray-menu] 托盘菜单: 状态已刷新（1 只宠物，可见=true；主题=dark）
+```
+
+| 截图 | 内容 |
+| --- | --- |
+| [`screenshots/settings-dark.png`](screenshots/README.md) | 设置窗口深色：深底 + 卡片 + 粉色强调 + 侧栏选中态，对比度正常 |
+| [`screenshots/tray-menu-dark.png`](screenshots/README.md) | 托盘菜单深色：面板、文字、图标、分隔线都正常 |
+
+> 试过的弯路：先用了 WebView2 的 `--force-dark-mode`（想借它翻转 `prefers-color-scheme`），
+> 实测页面判定仍是 `light`——那条路不可靠，才改成"显式 `data-theme` + `light-dark()`"。
+> 另外**深色下"跟随系统"仍是默认行为**：`?theme=` 只是给自检开的后门，不是产品功能。
+
+## 12.2 那次未复现的崩溃：压力跑了两组，仍未复现
+
+第 9.9 / 10.7 节记过一次 `0xc0000409`（release 二进制、存活 < 1 秒）的孤立事件。
+本轮用**当前代码**重新构建 release 后跑了压力：
+
+| 组 | 内容 | 结果 |
+| --- | --- | --- |
+| A | 冷启动 ×10（每次 2.5s 后强杀） | 异常退出 **0** 次；`Application Error` 事件数不变（仍是 12:50:41 那一条） |
+| B | 启动 → 连续改配置触发热重载 ×5（release 下 `panic=abort`，最容易暴露） | 进程一直存活；新增崩溃事件 **0** |
+
+**结论**：仍未复现，事件保持"孤立、无法归因"。记录保留在"未能验证"清单里——
+如果将来在真实使用中再现，优先按"启动即崩"排查（`tauri.conf.json` 嵌入资源、插件初始化顺序）。
+
+## 12.3 一个环境坑（只影响自动化验证）
+
+反复出现 "`Port 1420 is already in use`"：`job_kill` 杀掉的只是 pwsh 包装进程，
+**Vite 的 node 子进程还活着占着端口**，于是新起的 dev server 起不来、页面加载成"拒绝连接"。
+现在验证流程统一改成"**先按端口精确清理**再起服务"：
+
+```powershell
+foreach ($pid in (Get-NetTCPConnection -LocalPort 1420 -State Listen).OwningProcess) { Stop-Process -Id $pid -Force }
+```
+
+（这是本机自动化的事，不影响 `pnpm tauri:dev` 的正常使用。）
+## 11.7 顺带修掉的两个验证工具问题
 | 问题 | 处理 |
 | --- | --- |
 | 截图脚本按标题匹配到**别的应用**（"设置"二字撞车），把无关窗口提到前台截了一张别人的图 | `capture-window.ps1` 改为收集**所有**匹配窗口后取**面积最大**的那个 |

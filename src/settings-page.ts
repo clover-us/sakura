@@ -968,7 +968,13 @@ async function load(): Promise<void> {
     }
     render();
     setStatus('', `已载入：${config.pets.length} 只宠物 · 素材 ${available.length} 条`);
-    petLog(`设置: 已载入配置（${config.pets.length} 只宠物，${available.length} 条素材）`);
+    petLog(
+      // 顺手记下当前主题：深浅色跟随系统，一旦某个变量在深色下漏了，
+      // 第一件要确认的事就是"页面此刻到底是浅色还是深色"
+      `设置: 已载入配置（${config.pets.length} 只宠物，${available.length} 条素材；主题=${
+        document.documentElement.dataset.theme ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark(系统)' : 'light(系统)')
+      }）`,
+    );
   } catch (err) {
     loaded = false;
     byId('btn-save').setAttribute('disabled', 'disabled');
@@ -1007,7 +1013,21 @@ async function save(): Promise<void> {
 //  启动
 // ============================================================================
 
+/**
+ * 显式主题覆盖（只给自检用：`?theme=dark` / `?theme=light`）。
+ *
+ * 深色那套变量是**跟随系统**的，而开发机桌面是浅色——不强制一次，深色就永远没人看过
+ * （之前长期处于"写了但没验证"的状态）。只在 URL 带参数时生效，正常运行路径完全不受影响。
+ */
+function applyThemeOverride(): void {
+  const theme = new URLSearchParams(window.location.search).get('theme');
+  if (theme === 'dark' || theme === 'light') {
+    document.documentElement.dataset.theme = theme;
+  }
+}
+
 function bind(): void {
+  applyThemeOverride();
   setLogLabel('settings');
   byId('brand-logo').innerHTML = PET_LOGO;
   // 顶部与底部的按钮是静态 HTML：这里补上图标（用同一套 Lucide 形状）
