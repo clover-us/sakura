@@ -140,8 +140,19 @@ export class PetRuntime {
   private cursorInsideBody = false;
   /** 是否已把"可交互"状态上报给 Rust（幂等：值未变不重复 invoke） */
   private reportedInteractive = false;
-  /** 是否正在飞行（回调去重） */
-  private flying = false;
+  /**
+   * 是否正在飞行。
+   *
+   * **刻意做成"从动画器推导"的只读属性，而不是自己维护一个布尔量**（这里踩过坑）：
+   * 早先有一个 `flying` 字段 + `startThrow` 里的"已在飞行就跳过"守卫，而"打断飞行"
+   * 走的是 `ThrowAnimator.stop()`——它按设计**不回调 `onRest`**，于是那个字段漏了复位，
+   * 守卫从此永远为真：**只有第一次能甩出去，之后怎么拖都不飞**（用户实测）。
+   * 唯一真相放在 `ThrowAnimator` 里（它的 rAF 句柄在 start/stop/atRest 三处都被正确维护），
+   * 就不存在"两处状态不同步"这种可能了。
+   */
+  private get flying(): boolean {
+    return this.thrower.running;
+  }
   /** 是否已经记录过"首次命中"日志（避免每帧刷屏，同时证明命中判定确实生效） */
   private loggedFirstHit = false;
   /** 是否已经记录过"初始窗口位置"日志（同上，只记一次） */
@@ -242,13 +253,23 @@ export class PetRuntime {
         petLog(`拖拽: ${dragging ? '开始（已打断飞行与 Q 弹）' : '结束'}`);
         // 拖拽开始：打断飞行与 Q 弹，并把 inputBusy 拉高（Rust 侧在此期间绝不翻回穿透）
         if (dragging) {
-          this.thrower.stop();
-          this.squash.cancel();
+          this.interruptFlight();
         }
         void this.reportBusy(dragging);
       },
     });
     this.drag.setPhysics(this.physics);
+  }
+
+  /**
+   * 打断飞行（用户重新抓住宠物 / 开始一次新拖拽时调用）。
+   *
+   * 只做两件事：停掉飞行的 rAF 与 Q 弹。**不需要复位任何"是否在飞"的标志**——
+   * 那个状态现在是 `flying` 只读属性，直接读 `ThrowAnimator.running`（见字段注释）。
+   */
+  private interruptFlight(): void {
+    this.thrower.stop();
+    this.squash.cancel();
   }
 
   // ---------------------------------------------------------------------------
@@ -342,10 +363,21 @@ export class PetRuntime {
         );
       }
     }
+    // 这一帧**开始**时窗口的实际交互状态。必须在 `setInteractive` 之前取，
+    // 因为它会就地改写 `reportedInteractive`（见下面的兜底起手）。
+    const wasInteractive = this.reportedInteractive;
     void this.setInteractive(insideBody);
 
-    // 兜底起手：窗口处于穿透态时才允许（此时 DOM 事件确实到不了页面）
-    if (primaryDown && insideBody && !this.reportedInteractive) {
+    // 兜底起手：判据是"**这一帧开始时**窗口还是穿透态"。
+    //
+    // 语义：穿透态下 DOM 事件到不了页面，所以这次按下只可能来自采样通道 → 由采样起手；
+    // 反之，若开始时已经可交互，按下就该走 DOM（零延迟、坐标最准），这里绝不能再插一脚
+    //（两边都起手会把抓取偏移重算一遍，宠物跳一下；DOM 那边已有 `drag.isPressed` 去重）。
+    //
+    // 这里曾经写成 `!this.reportedInteractive`——读的是 `setInteractive` **之后**的值，
+    // 于是条件恒为假、整个分支是死代码：**穿透态下的第一次按下会被无声吞掉**
+    //（用户感受就是"点了没反应，得再点一次"），`?autotest=1/2/10` 这些合成自测也因此全线失效。
+    if (primaryDown && insideBody && !wasInteractive) {
       this.beginPress(cursor, 'sampler');
     }
   }
@@ -487,9 +519,8 @@ export class PetRuntime {
    * @param pointerId DOM 指针 id（采样兜底时传 -1：不绑定具体指针）
    */
   private beginPress(cursor: Vec2, origin: PressOrigin, pointerId = -1): void {
-    // 拖拽开始前打断飞行与 Q 弹（onDragStateChange 里也会做，这里覆盖"按下但未成拖拽"）
-    this.thrower.stop();
-    this.squash.cancel();
+    // 按下即打断飞行与 Q 弹（onDragStateChange 里也会做，这里覆盖"按下但未成拖拽"）
+    this.interruptFlight();
     this.pressStartedAt = performance.now();
     // 指针捕获：把后续指针事件**锁定在本窗口**，即使光标滑出窗口边界也照样收到。
     // 这是"拖拽中光标离开命中区 → 窗口翻回穿透 → pointerup 丢失"那条老问题的正道解法：
@@ -890,8 +921,10 @@ export class PetRuntime {
 
   /** 开始一次飞行 */
   private startThrow(box: Vec2, velocity: Vec2): void {
-    if (this.flying) return;
-    this.flying = true;
+    // 这里**刻意没有"已在飞行就跳过"的守卫**：那样的守卫一旦和"打断飞行"路径不同步，
+    // 就会让之后每一次甩出都静默失效（用户实测："只有首次能拖出来甩，后面怎么拖都不飞"）。
+    // `ThrowAnimator.start()` 内部本身会先 `stop()`，重复调用是安全且语义正确的
+    //（"被重新抓住再甩一次"本来就该以新初速重启）。
     petLog(`飞行: 开始，边界 ${this.knownAreas().length} 块屏`);
     this.thrower.start({
       box,
@@ -902,7 +935,6 @@ export class PetRuntime {
       panels: this.knownPanels(),
       onFrame: (next) => this.setBoxOrigin(next),
       onRest: (restBox, impactSpeed) => {
-        this.flying = false;
         this.setBoxOrigin(restBox);
         petLog(`飞行: 结束于 (${restBox.x.toFixed(0)},${restBox.y.toFixed(0)})，落地冲击 ${impactSpeed.toFixed(0)}px/s`);
         // 落地 Q 弹：冲击速度越大压得越狠（轻落 0.8 ~ 重砸 0.55，规则在 shared 里）
@@ -1123,9 +1155,6 @@ export class PetRuntime {
    * 不再依赖 DOM 的 pointerup 作为唯一收尾依据——这正是修复"拖到命中区外松手后失控"的关键：
    * 那次 `pointerup` 根本没到页面，状态机停在"按下中"，宠物继续跟着指针、窗口也不再恢复穿透。
    * 现在每一帧都带宿主的**物理按键状态**（`primaryDown`），按键一松就强制收尾。
-   *
-   * @param quietHitState 由 main.ts 传入的空实现，自测期间临时替换 `updateHitState`。
-   *        **必须屏蔽真实命中判定**：真实指针位置与合成轨迹无关，否则会把合成序列打断。
    */
   async runSelfTest(): Promise<void> {
     this.syntheticControl = true;
@@ -1245,6 +1274,138 @@ export class PetRuntime {
   }
 
   /**
+   * 专项自测（`?autotest=10`）：**连续多轮"甩出去 → 在空中抓住 → 再甩一次"**，
+   * 每一次松手都**必须**观察到新的飞行开始。
+   *
+   * ## 为什么需要它（真实 bug 的回归网）
+   *
+   * 用户实测："只有第一次能拖出来甩，后面怎么拖都不飞"。根因是"是否在飞"这件事被记在
+   * 两个地方：`ThrowAnimator` 自己的 rAF 状态，和运行时的 `flying` 标志。
+   * 而"在空中被抓住"走的是 `ThrowAnimator.stop()` —— 它按设计**不回调 `onRest`**，
+   * 于是标志漏了复位，`startThrow` 里的"已在飞行就跳过"守卫从此永远为真。
+   *
+   * 修复后"是否在飞"只有一个真相（`flying` 是只读属性，直接读 `ThrowAnimator.running`），
+   * 并且去掉了那个守卫。本自测把这个语义钉死：**每轮两次起飞都必须发生**。
+   *
+   * 顺带记录两个手感量（不需要真鼠标，全部走运行时自己的状态机）：
+   *   - 拖动期间的**弹簧滞后**（指针目标 − 窗口实际位置）的均值 / 峰值；
+   *   - 飞行期间的**每帧步长**均值 / 峰值（用来判断有没有"一顿一顿"）。
+   */
+  async runRepeatThrowTest(rounds = 3): Promise<void> {
+    this.syntheticControl = true;
+    try {
+      await this.runRepeatThrowSequence(rounds, (message) => petLog(`重复甩出自测: ${message}`));
+    } finally {
+      this.syntheticControl = false;
+      this.syntheticPrimaryDown = false;
+    }
+  }
+
+  /** 重复甩出自测的主序列（见 `runRepeatThrowTest` 的说明） */
+  private async runRepeatThrowSequence(rounds: number, log: (message: string) => void): Promise<void> {
+    /** 命中区中心在包围盒内的偏移（抓取点就是它） */
+    const grabX = this.hitBox.x + this.hitBox.width / 2;
+    const grabY = this.hitBox.y + this.hitBox.height / 2;
+    let takes = 0;
+    let expected = 0;
+
+    /** 一轮"按下 → 拖 → 甩 → 松手"，返回是否观察到起飞 */
+    const dragAndThrow = async (label: string): Promise<boolean> => {
+      // 按下：**先喂一帧"光标在很远的地方"**，再把光标点到宠物身上按下。
+      //
+      // 为什么必须先走这一步：采样兜底起手的前提是"这一帧开始时窗口还是穿透态"
+      //（可交互时按下应该走 DOM，见 evaluateInput 的兜底起手说明）。而合成自测没有 DOM，
+      // 所以必须自己制造"穿透态 + 光标驶入身体"这个前提；空中抓取时宠物高速移动，
+      // 每轮都重新瞄准一次才能稳定抓到（一次最多重试 8 帧）。
+      let pressed = false;
+      let start: Vec2 = { x: 0, y: 0 };
+      for (let attempt = 1; attempt <= 8 && !pressed; attempt += 1) {
+        await this.pumpSynthetic(this.boxOrigin.x - 600, this.boxOrigin.y - 400, false, 16);
+        start = { x: this.boxOrigin.x + grabX, y: this.boxOrigin.y + grabY };
+        await this.pumpSynthetic(start.x, start.y, true, 16);
+        pressed = this.drag.isPressed;
+      }
+      if (!pressed) {
+        log(`${label}: 异常——连续 8 帧都没能在身体上按下`);
+        return false;
+      }
+      // 分步拖动（≈9px/16ms，贴近真实鼠标事件粒度），同时采样弹簧滞后
+      let lagSum = 0;
+      let lagMax = 0;
+      let lagCount = 0;
+      let last: Vec2 = { ...start };
+      for (let i = 1; i <= 20; i += 1) {
+        const point: Vec2 = { x: start.x - i * 9, y: start.y + i * 3 };
+        last = point;
+        await this.pumpSynthetic(point.x, point.y, true, 16);
+        const lag = Math.hypot(point.x - grabX - this.boxOrigin.x, point.y - grabY - this.boxOrigin.y);
+        lagSum += lag;
+        lagMax = Math.max(lagMax, lag);
+        lagCount += 1;
+      }
+      // 甩手：最后 3 帧放大到 ~40px/帧（≈2500px/s，落在初速估算窗口内）
+      for (let i = 1; i <= 3; i += 1) {
+        await this.pumpSynthetic(last.x - i * 40, last.y + i * 20, true, 16);
+      }
+      const beforeThrow = this.flying;
+      // 松手：**按真实路径补一条 DOM pointerup**（pointerId=-1 与采样起手的绑定一致）。
+      //
+      // 为什么不能只喂"按键位翻 false"的采样帧：那条路要等按键看门狗的静默阈值
+      //（`DOG_SILENCE_MS = 250ms`）才收尾，而初速估算的样本有效期只有 150ms——
+      // 于是自测里的甩出会随机退化成"温柔放下"（假失败）。真实世界里窗口是可交互的，
+      // 松手就是一条立刻到达的 DOM pointerup，这里补上它才与真实时序一致。
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { bubbles: true, button: 0, buttons: 0, pointerId: -1 }),
+      );
+      await this.pumpSynthetic(last.x - 120, last.y + 60, false, 60);
+      const tookOff = !beforeThrow && this.flying;
+      log(
+        `${label}: 松手前飞行中=${beforeThrow} → 松手后飞行中=${this.flying} ` +
+          `（起飞=${tookOff}）弹簧滞后 平均=${(lagSum / Math.max(lagCount, 1)).toFixed(0)}px ` +
+          `峰值=${lagMax.toFixed(0)}px`,
+      );
+      return tookOff;
+    };
+
+    /** 等这次飞行结束（最多 15 秒），并统计每帧步长 */
+    const waitToLand = async (label: string): Promise<void> => {
+      const deadline = performance.now() + 15_000;
+      let prev = { ...this.boxOrigin };
+      let steps = 0;
+      let sum = 0;
+      let max = 0;
+      while (this.flying && performance.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 16));
+        const d = Math.hypot(this.boxOrigin.x - prev.x, this.boxOrigin.y - prev.y);
+        if (d > 0.5) {
+          steps += 1;
+          sum += d;
+          max = Math.max(max, d);
+        }
+        prev = { ...this.boxOrigin };
+      }
+      log(
+        `${label}: 落地=${!this.flying} 位置=(${this.boxOrigin.x.toFixed(0)},${this.boxOrigin.y.toFixed(0)}) ` +
+          `帧步长 平均=${(sum / Math.max(steps, 1)).toFixed(1)}px 峰值=${max.toFixed(1)}px（${steps} 帧有位移）`,
+      );
+    };
+
+    log(`开始 轮数=${rounds}（每轮期望两次起飞：先甩出，再在空中抓住重甩）`);
+    for (let round = 1; round <= rounds; round += 1) {
+      expected += 2;
+      if (await dragAndThrow(`第${round}轮·甩出`)) takes += 1;
+      // **不等落地**就在空中抓住重甩——这正是当年"标志漏复位"的触发路径
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      if (await dragAndThrow(`第${round}轮·空中重甩`)) takes += 1;
+      await waitToLand(`第${round}轮·落地`);
+    }
+    const passed = takes === expected;
+    log(
+      `结果: 起飞 ${takes}/${expected} 次 —— ${passed ? '✓ 每轮都成功起飞（重复甩出可用）' : '✗ 有甩出没有起飞（回归！）'}`,
+    );
+  }
+
+  /**
    * 专项自测：**"拖到命中区外才松手"**（`?autotest=2`）——复现并验证失控 bug 的修复。
    *
    * 失败场景（用户实际遇到的）：
@@ -1255,8 +1416,6 @@ export class PetRuntime {
    * 本自测用合成帧精确复现这条路径，并核对两条行为：
    *   阶段 2：按键仍按下、光标已在命中区外 → 宠物**不再乱跑**（采样兜底的按下不得脱离命中区）；
    *   阶段 3/4：喂入"按键松开"帧 → 状态机**必须收尾**，之后不再移动。
-   *
-   * @param quietHitState 空实现，自测期间临时替换 `updateHitState`（原因同 runSelfTest）
    */
   async runDetachTest(): Promise<void> {
     this.syntheticControl = true;

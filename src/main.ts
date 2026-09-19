@@ -120,6 +120,11 @@ async function bootstrap(): Promise<void> {
       petLog('启动: 检测到 autotest=9，气泡"显示→隐藏→再显示"，验证窗口复用与穿透位保持');
       window.setTimeout(() => runtime.say('气泡复用自测：第一句，3 秒后自动隐藏', 3000), 2500);
       window.setTimeout(() => runtime.say('气泡复用自测：第二句，验证同一个窗口被复用', 30000), 9000);
+    } else if (autotest === '10') {
+      // 重复甩出自测：每轮"甩出去 → 在空中抓住 → 再甩一次"，断言每次松手都真的起飞。
+      // 对应 bug：`flying` 标志在"空中被抓住"路径漏复位 → 只有第一次能甩（见 runRepeatThrowTest）
+      petLog('启动: 检测到 autotest=10，开始"重复甩出 / 空中重甩"自测');
+      void runtime.runRepeatThrowTest();
     } else if (autotest === '5') {
       // 漫游验证：漫游权重只有 5%，自动化时等到它太慢；这里确定性触发一次行走
       petLog('启动: 检测到 autotest=5，强制走一段以验证漫游');
