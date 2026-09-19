@@ -19,6 +19,7 @@
 // 模块可见性：对二进制冒烟程序（src/bin/logic-smoke.rs）开放，
 // 因为本机的 GNU 工具链跑不起 `cargo test` 的 libtest 可执行文件（见该文件头部说明）。
 // 对外开放的仅是**纯逻辑**部分；命令/托盘等仍按内部实现使用。
+pub mod balance;
 pub mod bubble;
 pub mod chat_window;
 pub mod commands;
@@ -149,6 +150,7 @@ pub fn run() {
             commands::llm_whisper_now,
             commands::llm_chat,
             commands::open_chat,
+            commands::balance_query,
             commands::close_chat,
             commands::llm_memory,
             commands::llm_memory_clear,
@@ -369,6 +371,15 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ---- 7g. 余额探针（`WHALE_PET_DIAG_BALANCE=<毫秒>`）----
+    if let Ok(value) = std::env::var("WHALE_PET_DIAG_BALANCE") {
+        if !value.trim().is_empty() {
+            let delay = value.parse::<u64>().unwrap_or(3000);
+            eprintln!("[whale-pet] 启用余额探针（{delay}ms 后查询）");
+            diagnostics::spawn_balance_probe(app.clone(), delay);
+        }
+    }
+
     Ok(())
 }
 
@@ -460,6 +471,8 @@ fn spawn_poll_loop(app: AppHandle) {
             if now.duration_since(last_whisper_check) >= Duration::from_millis(1000) {
                 last_whisper_check = now;
                 whisper::tick(&app);
+                // 余额自动查询（默认关闭；与碎碎念共用这个 1 秒节拍，各自判周期）
+                whisper::balance_tick(&app);
             }
 
             // ---- 配置热重载 ----

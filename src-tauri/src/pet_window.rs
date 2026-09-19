@@ -33,6 +33,10 @@ pub const EVENT_MENU_ACTION: &str = "pet://menu-action";
 /// 碎碎念（M3）：宿主生成一句话 → 页面弹气泡（可选再播一条 whisper 动画）
 pub const EVENT_WHISPER: &str = "pet://whisper";
 
+/// 余额（M3）：宿主查到余额 → 页面弹气泡 + 按**档位下标**播余额动画
+/// （下标而不是动画名：动作池每只宠物可以不同，由页面从自己的池里取）
+pub const EVENT_BALANCE: &str = "pet://balance";
+
 /// 动画画布宽高比（高/宽）：素材是 640×360，桌面端沿用同一比例
 pub const ASPECT_RATIO: f64 = 9.0 / 16.0;
 

@@ -254,6 +254,38 @@ pub struct LlmConfig {
     /// 对话
     #[serde(default)]
     pub chat: ChatConfig,
+    /// 余额 / 用量查询（M3）：与 LLM 是**两回事**，所以单独一段、单独开关
+    #[serde(default)]
+    pub balance: BalanceConfig,
+}
+
+/// 余额查询配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceConfig {
+    /// 开关：`false` = 不查（菜单项会明确说"没开"）。默认关，符合"默认零联网"
+    #[serde(default)]
+    pub enabled: bool,
+/// 服务商：`deepseek`（`/user/balance`）或 `opencode-go`（`/zen/go/v1/usage`）
+    #[serde(default = "default_balance_provider")]
+    pub provider: String,
+    /// 覆盖接口前缀（留空用服务商预置；用于本地 mock 验证或自建代理）
+    #[serde(default)]
+    pub base_url: String,
+    /// 是否按周期自动查（默认 **false**：只在菜单里点的时候查一次）
+    #[serde(default)]
+    pub auto_refresh: bool,
+    /// 自动查的周期（秒）：默认 1800，与上游 `eventsRefreshSec.balance` 一致
+    #[serde(default = "default_balance_interval_sec")]
+    pub interval_sec: u64,
+}
+
+fn default_balance_provider() -> String {
+    "deepseek".to_string()
+}
+
+const fn default_balance_interval_sec() -> u64 {
+    1800
 }
 
 /// 碎碎念配置
@@ -316,6 +348,12 @@ impl Default for WhisperConfig {
 impl Default for ChatConfig {
     fn default() -> Self {
         serde_json::from_str("{}").expect("ChatConfig 的字段默认值应当自洽")
+    }
+}
+
+impl Default for BalanceConfig {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("BalanceConfig 的字段默认值应当自洽")
     }
 }
 
@@ -469,6 +507,13 @@ impl LlmConfig {
         }
         if self.chat.memory_rounds > 50 {
             return Err(format!("llm.chat.memoryRounds 最多 50，当前为 {}", self.chat.memory_rounds));
+        }
+        if !crate::balance::provider_supported(&self.balance.provider) {
+            return Err(format!("llm.balance.provider 只支持 deepseek / opencode-go，当前为 {:?}", self.balance.provider));
+        }
+        if self.balance.auto_refresh && self.balance.interval_sec < 60 {
+            // 余额接口虽然不烧 token，但也没必要一分钟打一次
+            return Err(format!("llm.balance.intervalSec 至少 60 秒，当前为 {}", self.balance.interval_sec));
         }
         Ok(())
     }

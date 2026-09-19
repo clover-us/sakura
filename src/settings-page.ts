@@ -116,6 +116,7 @@ interface LlmConfig {
   timeoutSec: number;
   whisper: { enabled: boolean; intervalSec: number; persona: string; imageEnabled: boolean };
   chat: { enabled: boolean; memoryRounds: number; imageEnabled: boolean };
+  balance: { enabled: boolean; provider: string; baseUrl: string; autoRefresh: boolean; intervalSec: number };
 }
 
 /** `llm_status` 的返回（密钥只以打码形态出现） */
@@ -138,6 +139,10 @@ interface LlmStatus {
   needsKey: boolean;
   /** 本机可用表情包数量（图真在 + 描述非空）；为 0 时配图开关禁用 */
   memesCount: number;
+  balanceEnabled: boolean;
+  balanceProvider: string;
+  balanceAutoRefresh: boolean;
+  balanceIntervalSec: number;
 }
 
 /** AI 命令的结构化失败（reason 用于分支，message 用于显示） */
@@ -1073,6 +1078,81 @@ function renderAiPage(): HTMLElement {
     }, 'x'),
   );
   test.appendChild(testRow);
+
+  // ---- 余额 / 用量（M3）----
+  //
+  // 与 LLM 分开一卡：余额接口是**查账户**，不消耗 token，失败也绝不能显示假数字。
+  // key 复用 AI 页那一把：所以文案里写清楚"查哪家就用哪家的 key"（多把 key 共存下一轮再做）。
+  const balance = card(
+    '余额 / 用量',
+    '查账户余额或用量：DeepSeek 走 /user/balance，OpenCode 走 /zen/go/v1/usage。这个接口**不消耗 token**，但也需要对应的 API Key。',
+  );
+  balance.appendChild(
+    checkRow(llm.balance.enabled, '启用余额查询', '关着时菜单里的「查余额」会明确告诉你去开启', (next) => {
+      llm.balance.enabled = next;
+      markDirty();
+      render();
+    }),
+  );
+  const balanceGrid = el('div', 'grid');
+  balanceGrid.appendChild(
+    field(
+      '服务商',
+      selectInput(
+        llm.balance.provider,
+        [
+          { value: 'deepseek', label: 'DeepSeek（余额）' },
+          { value: 'opencode-go', label: 'OpenCode Go（用量）' },
+        ],
+        (next) => {
+          llm.balance.provider = next;
+          markDirty();
+          render();
+        },
+      ),
+    ),
+  );
+  balanceGrid.appendChild(
+    field('接口地址（baseUrl）', textInput(llm.balance.baseUrl, (next) => {
+      llm.balance.baseUrl = next;
+    }), '留空用服务商预置（自建代理/mock 时才填）'),
+  );
+  balanceGrid.appendChild(field('自动查询周期（秒，≥60）', numberInput(llm.balance.intervalSec, (next) => {
+    llm.balance.intervalSec = next;
+  }, { min: 60 })));
+  balance.appendChild(balanceGrid);
+  balance.appendChild(
+    checkRow(llm.balance.autoRefresh, '按周期自动查', `默认关闭：只在菜单里点「查余额」时查一次（默认周期 ${llm.balance.intervalSec} 秒）`, (next) => {
+      llm.balance.autoRefresh = next;
+      markDirty();
+      render();
+    }),
+  );
+  const balanceActions = el('div', 'row-actions');
+  balanceActions.appendChild(
+    idButton('balance-query-now', '现在查一次', () => {
+      void (async () => {
+        const first = config?.pets[0];
+        if (!first) return;
+        setStatus('', '正在查询余额…');
+        try {
+          const text = await invoke<string>('balance_query', { label: `pet-${first.id}-0` });
+          setStatus('ok', `余额：${text}`);
+        } catch (err) {
+          const failure = err as LlmError;
+          setStatus('error', `余额查询失败（${failure.reason ?? 'unknown'}）：${failure.message ?? String(err)}`);
+        }
+      })();
+    }),
+  );
+  balance.appendChild(balanceActions);
+  const balanceHint = el('p', 'desc');
+  balanceHint.style.marginTop = '12px';
+  balanceHint.textContent =
+    '说明：OpenCode 用量返回三个时间窗（5 小时 / 本周 / 本月）与各自的重置时间；DeepSeek 返回余额与赠送/充值明细。' +
+    '余额动画按"已用百分比"分六档（钱袋满溢 → 分文不剩），档位算法与上游一致（DeepSeek 以 ¥20 为满额）。';
+  balance.appendChild(balanceHint);
+  host.appendChild(balance);
 
   const privacy = el('p', 'desc');
   privacy.style.marginTop = '12px';

@@ -277,7 +277,36 @@
       "move": 5
     },
 
-  // ===================== 表情包（M3：碎碎念 / 对话配图） =====================
+  // ===================== AI 能力（M3；默认全关 = 零联网） =====================
+  // 密钥**不在这里**：用设置窗口的「AI」页保存，DPAPI 加密后存成数据目录的 llm-key.bin。
+  // provider 预置：deepseek（api.deepseek.com）/ openai / ollama（本机 11434，不需要 key）/ custom。
+  "llm": {
+    "enabled": false,
+    "provider": "deepseek",
+    "baseUrl": "",              // 留空用预置；自建代理或本地 mock 时才填
+    "model": "",                // 留空用预置（deepseek-chat / gpt-4o-mini / qwen2.5:7b）
+    "temperature": 1.0,
+    "timeoutSec": 60,
+    "whisper": {
+      "enabled": false,
+      "intervalSec": 300,       // 至少 30 秒
+      "persona": "",            // 留空用内置人设（Q 版小鲸鱼）
+      "imageEnabled": false     // 碎碎念配图：随机抽一张表情包
+    },
+    "chat": {
+      "enabled": false,
+      "memoryRounds": 5,        // 送进上下文的轮数（memory.json 全量保存）
+      "imageEnabled": false     // 对话配图：把表情包清单交给模型按语境挑
+    },
+    "balance": {
+      "enabled": false,
+      "provider": "deepseek",   // deepseek（余额）| opencode-go（用量）
+      "baseUrl": "",
+      "autoRefresh": false,
+      "intervalSec": 1800
+    }
+  },
+  // ===================== 表情包（M3：上一条 llm.whisper/chat.imageEnabled 用） =====================
   // 键 = 数据目录下 memes/<键>.png 的文件名（不含扩展名）；值 = 该图内容的简要描述。
   // 碎碎念开配图时**随机抽一张**，把描述注入提示词让那句话配合画面（无上下文可选，故随机）；
   // 对话开配图时把**整张清单**交给模型，由它按语境挑（回复末尾写 [图:名称] 标记）。

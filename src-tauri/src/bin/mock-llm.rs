@@ -104,6 +104,33 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
     }
 
     // ---- 按路径决定行为 ----
+    //
+    // 余额/用量两条路由（M3）：形状与真实接口一致，便于在**不联网**的情况下验证解析与档位。
+    if path.contains("/user/balance") {
+        if path.contains("/unauthorized/") {
+            return respond(&mut stream, 401, "application/json", r#"{"error":{"message":"invalid api key"}}"#);
+        }
+        let payload = serde_json::json!({
+            "is_available": true,
+            "balance_infos": [{
+                "currency": "CNY",
+                "total_balance": "12.34",
+                "granted_balance": "10.00",
+                "topped_up_balance": "2.34"
+            }]
+        });
+        return respond(&mut stream, 200, "application/json", &payload.to_string());
+    }
+    if path.contains("/zen/go/v1/usage") {
+        let payload = serde_json::json!({
+            "usage": {
+                "rolling": { "percent": 15.0, "resetsAt": "2099-01-01T00:00:00Z" },
+                "weekly": { "percent": 40.0, "resetsAt": "2099-01-02T00:00:00Z" },
+                "monthly": { "percent": 20.0, "resetsAt": "2099-01-03T00:00:00Z" }
+            }
+        });
+        return respond(&mut stream, 200, "application/json", &payload.to_string());
+    }
     if path.contains("/unauthorized/") {
         return respond(&mut stream, 401, "application/json", r#"{"error":{"message":"invalid api key"}}"#);
     }

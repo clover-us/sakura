@@ -112,7 +112,10 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
 - [x] **表情包配图**：碎碎念随机抽（描述注入提示词）/ 对话按语境选（末尾 `[图:名称]` 标记，只在池内命中才采纳）、
       气泡支持配图；素材由 `import-animations.ps1 -All` 导入，配置表随内置模板回落
       —— 见 `VERIFICATION.md` 第 15 节（含两个静默 bug 的复盘）
-- [ ] **余额**：DeepSeek + OpenCode + 自定义接口（上游 `host/balance.ts` 的 provider 表可复用）
+- [x] **余额 / 用量**：DeepSeek `/user/balance` + OpenCode `/zen/go/v1/usage`（provider 表、20s 超时、
+  退避重试、结构化失败、托盘与右键入口、气泡 + 六档余额动画，档位算法与上游一致）
+      —— 见 `VERIFICATION.md` 第 16 节（含真实 DeepSeek 余额验证）
+- [ ] **多把 key 共存**：密钥库目前单槽位，"LLM 用 DeepSeek + 余额查 OpenCode"需要两把 key（下一轮改映射）
 - [x] **真实 provider 联调**：DeepSeek `deepseek-chat` 下自检与对话各一次真跑通过；
       并因此修掉一个 mock 验不出的致命坑（https 传输层 panic，见 `VERIFICATION.md` 13.11）
 

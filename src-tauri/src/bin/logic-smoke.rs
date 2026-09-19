@@ -705,6 +705,98 @@ fn main() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ---- 14. 余额查询（M3）：两家服务商的解析 / 档位算法 / 时间文案 ----
+    println!("\n[14] 余额查询（deepseek / opencode-go）");
+    {
+        use whale_pet_desktop_lib::balance;
+
+        // DeepSeek：¥20 视为满额 → 12.34 元 = 已用 38.3%
+        let raw = r#"{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"12.34","granted_balance":"10.00","topped_up_balance":"2.34"}]}"#;
+        match balance::parse_deepseek(raw) {
+            Ok(snapshot) => {
+                check(
+                    "deepseek 解析：文案含余额与明细",
+                    snapshot.text.contains("¥12.34") && snapshot.text.contains("赠送 ¥10.00") && snapshot.text.contains("充值 ¥2.34"),
+                    &snapshot.text,
+                );
+                check(
+                    "deepseek 档位：¥12.34 → 已用 38.3% → 档 1（金袋叮当）",
+                    (snapshot.used_percent - 38.3).abs() < 0.05 && snapshot.animation_index == 1,
+                    &format!("used={} index={}", snapshot.used_percent, snapshot.animation_index),
+                );
+            }
+            Err(err) => check("deepseek 解析", false, err.reason()),
+        }
+        check(
+            "档位算法与上游一致：0→0、19→0、20→1、99→4、100→5",
+            balance::animation_index(0.0) == 0
+                && balance::animation_index(19.9) == 0
+                && balance::animation_index(20.0) == 1
+                && balance::animation_index(99.9) == 4
+                && balance::animation_index(100.0) == 5,
+            "",
+        );
+        check(
+            "透支（负数余额）按已用完折算 → 档 5",
+            (balance::deepseek_used_percent(-0.02) - 100.0).abs() < 0.001,
+            "",
+        );
+        check(
+            "余额字段不是数字 → bad-response（绝不显示假数字）",
+            matches!(balance::parse_deepseek(r#"{"balance_infos":[{"currency":"CNY","total_balance":"--"}]}"#), Err(whale_pet_desktop_lib::llm::Failure::BadResponse(_))),
+            "",
+        );
+        check(
+            "缺少 balance_infos → bad-response",
+            matches!(balance::parse_deepseek(r#"{"is_available":true}"#), Err(whale_pet_desktop_lib::llm::Failure::BadResponse(_))),
+            "",
+        );
+
+        // OpenCode：三窗口百分比 + 最紧窗口剩余 + 重置时间
+        let raw = r#"{"usage":{"rolling":{"percent":15,"resetsAt":"2099-01-01T00:00:00Z"},"weekly":{"percent":40,"resetsAt":"2099-01-02T00:00:00Z"},"monthly":{"percent":20,"resetsAt":"2099-01-03T00:00:00Z"}}}"#;
+        match balance::parse_opencode(raw) {
+            Ok(snapshot) => {
+                check(
+                    "opencode 解析：三个窗口 + 取最大值作为已用%",
+                    snapshot.text.contains("5 小时 15%") && snapshot.text.contains("本周 40%") && snapshot.text.contains("本月 20%")
+                        && (snapshot.used_percent - 40.0).abs() < 0.001,
+                    &snapshot.text,
+                );
+                check(
+                    "最紧窗口 = 剩余额度最少者（5 小时剩 $10.20，少于本周 $18、本月 $48）并带重置时间",
+                    snapshot.text.contains("最紧「5 小时」剩 $10.20") && snapshot.text.contains("小时后重置"),
+                    &snapshot.text,
+                );
+                check("opencode 档位：40% → 档 2", snapshot.animation_index == 2, &format!("{}", snapshot.animation_index));
+            }
+            Err(err) => check("opencode 解析", false, err.reason()),
+        }
+        check(
+            "缺窗口 → bad-response",
+            matches!(balance::parse_opencode(r#"{"usage":{"rolling":{"percent":1}}}"#), Err(whale_pet_desktop_lib::llm::Failure::BadResponse(_))),
+            "",
+        );
+        check(
+            "未登记的服务商 → unsupported",
+            !balance::provider_supported("opencode") && balance::provider_supported("opencode-go") && balance::provider_supported("deepseek"),
+            "",
+        );
+        check(
+            "金额格式化：CNY→¥、USD→$、未知货币拼代码",
+            balance::format_money("CNY", "1.5") == "¥1.5"
+                && balance::format_money("USD", "2") == "$2"
+                && balance::format_money("EUR", "3") == "3 EUR",
+            "",
+        );
+        check(
+            "时间文案：过去时间 = 已重置、解析不了 = 空串（不显示假时间）",
+            balance::reset_in_text(Some("2000-01-01T00:00:00Z")) == "已重置"
+                && balance::reset_in_text(Some("not-a-time")).is_empty()
+                && balance::reset_in_text(None).is_empty(),
+            "",
+        );
+    }
+
     // SAFETY: 单线程
     let (passed, failed) = unsafe { (PASSED, FAILED) };
     println!("\n=== 结果：通过 {passed} 项，失败 {failed} 项 ===");

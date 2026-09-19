@@ -549,6 +549,35 @@ pub fn spawn_chat_probe(app: tauri::AppHandle, delay_ms: u64, message: String) {
     });
 }
 
+/// 排障：`WHALE_PET_DIAG_BALANCE=<毫秒>` —— 查一次余额并让宠物说出来。
+///
+/// 与托盘「查余额」走**同一个函数**（`balance::query_and_say`），因此验证到的就是用户那条路。
+/// 证据：宿主日志里的成功/失败、宠物页日志「余额: …（档位 N）」、以及气泡文案。
+pub fn spawn_balance_probe(app: tauri::AppHandle, delay_ms: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        let label = {
+            let state = app.state::<crate::state::AppState>();
+            let pets = crate::watchdog::timed_lock(&state.pets, "pets（余额探针）");
+            pets.keys().next().cloned()
+        };
+        let Some(label) = label else {
+            eprintln!("[whale-pet][余额探针] 没有宠物，取消");
+            return;
+        };
+        eprintln!("[whale-pet][余额探针] 开始查询（{label}）");
+        match crate::balance::query_and_say(&app, &label) {
+            Ok(snapshot) => eprintln!(
+                "[whale-pet][余额探针] 成功：provider={} 已用={:.1}% 档位={} 文案={}",
+                snapshot.provider, snapshot.used_percent, snapshot.animation_index, snapshot.text
+            ),
+            Err(failure) => {
+                eprintln!("[whale-pet][余额探针] 失败（{}）：{}", failure.reason(), failure.message())
+            }
+        }
+    });
+}
+
 /// 当前时间戳（`YYYY-MM-DD HH:MM:SS.mmm`，本地时区不可用，统一用 UTC+0 便于对齐日志）
 fn timestamp() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();

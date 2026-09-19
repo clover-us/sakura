@@ -681,8 +681,13 @@ pub struct LlmStatusDto {
     pub memory_path: String,
     /// 该 provider 是否需要 key（ollama 不需要）
     pub needs_key: bool,
-    /// 本机**可用**的表情包数量（图真在 + 描述非空），设置页用它告诉用户"配图能不能用"
+/// 本机**可用**的表情包数量（图真在 + 描述非空），设置页用它告诉用户"配图能不能用"
     pub memes_count: usize,
+    /// 余额查询开关 / 服务商 / 是否自动 / 周期（设置页显示与编辑）
+    pub balance_enabled: bool,
+    pub balance_provider: String,
+    pub balance_auto_refresh: bool,
+    pub balance_interval_sec: u64,
 }
 
 /// 记忆里的一条消息
@@ -714,7 +719,11 @@ fn llm_status_of(app_data_dir: &std::path::Path, config: &crate::config::AppConf
         key_path: store.path().display().to_string(),
         memory_path: crate::memory::MemoryStore::new(app_data_dir).path().display().to_string(),
 needs_key: crate::config::provider_needs_key(config.llm.provider.trim()),
-        memes_count: crate::memes::pool(config, app_data_dir).len(),
+memes_count: crate::memes::pool(config, app_data_dir).len(),
+        balance_enabled: config.llm.balance.enabled,
+        balance_provider: config.llm.balance.provider.clone(),
+        balance_auto_refresh: config.llm.balance.auto_refresh,
+        balance_interval_sec: config.llm.balance.interval_sec,
     }
 }
 
@@ -794,6 +803,16 @@ pub async fn llm_chat(app: AppHandle, label: String, text: String) -> Result<Str
     let image = generation.meme.as_ref().map(|meme| crate::memes::asset_path(&meme.name));
     crate::whisper::emit(&app, &label, &generation.text, image.as_deref());
     Ok(generation.text)
+}
+
+/// 查一次余额并让宠物说出来（托盘/右键菜单调用）。
+///
+/// 余额接口**不消耗 token**，所以这是"点一次查一次"的语义（自动周期默认关闭）。
+#[tauri::command]
+pub async fn balance_query(app: AppHandle, label: String) -> Result<String, LlmErrorDto> {
+    crate::balance::query_and_say(&app, &label)
+        .map(|snapshot| snapshot.text)
+        .map_err(LlmErrorDto::from)
 }
 
 /// 打开某只宠物的对话输入窗（托盘/右键菜单调用）

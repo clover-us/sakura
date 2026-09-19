@@ -209,6 +209,21 @@ pub fn run_menu_action(
             dispatch_menu_action(app, label, MenuAction { anim: Some(name.to_string()), action: None });
             Ok(())
         }
+        "balance" => {
+            // 余额是"关于这只宠物"的信息：先确保宠物可见，再让它说出来（气泡 + 档位动画）
+            show_all(app);
+            let label = {
+                let state = app.state::<AppState>();
+                let pets = watchdog::timed_lock(&state.pets, "pets（查余额）");
+                pets.keys().next().cloned()
+            };
+            match label {
+                Some(label) => crate::balance::query_and_say(app, &label)
+                    .map(|_| ())
+                    .map_err(|failure| failure.message()),
+                None => Err("还没有宠物，先开一只再查余额".to_string()),
+            }
+        }
         "settings" => crate::settings_window::open(app),
         "chat" => {
             // 对着空气说话很奇怪：先把宠物显示出来

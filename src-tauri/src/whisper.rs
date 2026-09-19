@@ -45,6 +45,60 @@ pub struct WhisperEvent {
     pub image: Option<String>,
 }
 
+/// 余额自动查询（只在 `llm.balance.autoRefresh` 打开时生效）。
+///
+/// 与碎碎念分开计时的理由：周期不同（默认 1800s vs 300s），失败代价也不同
+/// （余额不烧 token，但打太勤会被服务商限流）。
+pub fn balance_tick(app: &AppHandle) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    if BUSY.load(Ordering::Relaxed) {
+        return;
+    }
+    let (config, label) = {
+        let state = app.state::<AppState>();
+        let config = state.config_snapshot();
+        let label = {
+            let runtimes = watchdog::timed_lock(&state.pets, "pets（余额定时）");
+            runtimes.keys().next().cloned()
+        };
+        (config, label)
+    };
+    if !config.llm.balance.enabled || !config.llm.balance.auto_refresh {
+        return;
+    }
+    let Some(label) = label else { return };
+    let interval = Duration::from_secs(config.llm.balance.interval_sec.max(60));
+    {
+        let mut last = match LAST.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        match *last {
+            Some(at) if at.elapsed() < interval => return,
+            // 与碎碎念一致：首次只记基线，不在刚启动时就冒一条
+            None => {
+                *last = Some(Instant::now());
+                return;
+            }
+            _ => {}
+        }
+        *last = Some(Instant::now());
+    }
+    if BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        match crate::balance::query_and_say(&app, &label) {
+            Ok(snapshot) => eprintln!("[whale-pet][余额] 自动查询：{}", snapshot.text),
+            Err(failure) => eprintln!("[whale-pet][余额] 自动查询失败（{}）：{}", failure.reason(), failure.message()),
+        }
+        // 失败也要等下一整轮，避免离线时刷屏
+        BUSY.store(false, Ordering::SeqCst);
+    });
+}
+
 /// 轮询线程每秒调一次
 pub fn tick(app: &AppHandle) {
     if BUSY.load(Ordering::Relaxed) {

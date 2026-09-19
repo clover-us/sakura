@@ -65,6 +65,8 @@ pub enum Failure {
     Http(u16),
     /// 返回了 200 但内容不可用（含"模型未返回文本"）
     BadResponse(String),
+    /// 这个服务商不支持该操作（例如余额查询只支持上游登记过的两家）
+    Unsupported,
 }
 
 impl Failure {
@@ -80,6 +82,7 @@ impl Failure {
             Failure::RateLimited => "rate-limited",
             Failure::Http(_) => "http-error",
             Failure::BadResponse(_) => "bad-response",
+            Failure::Unsupported => "unsupported",
         }
     }
 
@@ -95,6 +98,7 @@ impl Failure {
             Failure::RateLimited => "请求太频繁或额度用尽（429）".to_string(),
             Failure::Http(code) => format!("模型服务返回 HTTP {code}"),
             Failure::BadResponse(detail) => format!("模型返回的内容无法使用：{detail}"),
+            Failure::Unsupported => "这个服务商不支持余额查询（支持 deepseek / opencode-go）".to_string(),
         }
     }
 }

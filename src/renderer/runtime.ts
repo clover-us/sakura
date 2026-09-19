@@ -1040,6 +1040,15 @@ export class PetRuntime {
       );
       return;
     }
+    if (action.action === 'balance') {
+      // 余额查询在宿主侧（要读加密库里的 key、要走 20s 超时与退避重试）；
+      // 页面只负责"说"——宿主查到后会经 pet://balance 事件回来
+      petLog('菜单: 查余额');
+      void invoke<string>('balance_query', { label: this.petConfig.label }).catch((err: unknown) =>
+        petLogError('余额: 查询失败', err),
+      );
+      return;
+    }
     if (action.action === 'home') {
       petLog('菜单: 回到初始位置');
       this.goHome();
@@ -1074,6 +1083,36 @@ export class PetRuntime {
    *
    * 气泡停留 10 秒（上游 `BUBBLE_DURATION_MS` 同值）：太短来不及看，太长像卡住了。
    */
+  /**
+   * 余额（M3）：宿主查到余额 → 弹气泡 + 按**档位下标**播余额动画。
+   *
+   * 为什么传下标而不是动画名：动作池是"每只宠物可以不同"的，
+   * 由页面从**自己的** `animations.events.balance` 里按下标取，才不会出现
+   * "宿主挑了一条这只宠物没有的动画"。档位算法在宿主侧（`balance::animation_index`），
+   * 与上游 `balanceEventIndex` 同一套：0 = 满溢 … 5 = 分文不剩。
+   */
+  async onBalance(text: string, animationIndex?: number): Promise<void> {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      petLogError('余额: 收到空文案，已忽略', null);
+      return;
+    }
+    petLog(`余额: ${trimmed}（档位 ${animationIndex ?? '-'}）`);
+    this.say(trimmed, 10_000);
+
+    const slots = this.petConfig.animations.events?.['balance'];
+    if (!slots || slots.length === 0) return;
+    // 池子可能少于 6 条（用户自己裁剪过）：夹到池内，避免播一条不存在的动画
+    const index = Math.min(Math.max(animationIndex ?? 0, 0), slots.length - 1);
+    const animation = pickSlot(slots[index]);
+    if (!animation) return;
+    try {
+      await this.playPicked(animation);
+    } catch (err) {
+      petLogError(`余额: 动画 ${animation} 播放失败`, err);
+    }
+  }
+
   async onWhisper(text: string, image?: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) {

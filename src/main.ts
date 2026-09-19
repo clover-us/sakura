@@ -65,6 +65,11 @@ async function bootstrap(): Promise<void> {
     });
     // 碎碎念（M3）：宿主按周期生成一句话，这里负责"说"——弹气泡（10 秒）+ 可选播一条 whisper 动画。
     // 生成在宿主侧（Rust），因为周期、多宠物轮换、失败退避都只在那一处；页面只管表现。
+    // 余额（M3）：宿主查到后经这里回来，页面负责"说"+ 按档位播余额动画
+    await listen<{ petLabel: string; text: string; animationIndex: number }>('pet://balance', (payload) => {
+      if (payload.petLabel !== label) return;
+      void runtime?.onBalance(payload.text, payload.animationIndex);
+    });
     await listen<{ petLabel: string; text: string; image?: string }>('pet://whisper', (payload) => {
       if (payload.petLabel !== label) return;
       // image 是**相对素材路径**（有配图时才有）：气泡页自己拼 assetBaseUrl

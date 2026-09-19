@@ -88,6 +88,8 @@ const ICONS: Record<string, string> = {
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
   'message-circle':
     '<path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/>',
+  wallet:
+    '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
 };
 
@@ -212,6 +214,10 @@ function renderMenu(): void {
           ${icon('message-circle')}
           <span class="label">说两句…</span>
         </button>
+        <button class="item" data-act="balance">
+          ${icon('wallet')}
+          <span class="label">查余额</span>
+        </button>
         <div class="sep"></div>
         <button class="item" data-act="settings">
           ${icon('settings')}
@@ -233,6 +239,7 @@ function renderMenu(): void {
         if (action === 'toggle') void act('toggle');
         else if (action === 'home') void act('home');
         else if (action === 'chat') void act('chat');
+        else if (action === 'balance') void act('balance');
         else if (action === 'settings') void act('settings');
         else if (action === 'quit') void act('quit');
         else if (action === 'picker') showPicker(pickerPet);
