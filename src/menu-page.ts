@@ -41,6 +41,7 @@ function extendTree(base: MenuNode[]): MenuNode[] {
       children: [
         { label: '显示一句气泡', action: 'say-demo' as MenuLeaf['action'] },
         { label: '回到初始位置', action: 'home' as MenuLeaf['action'] },
+        { label: '说两句…', action: 'chat' as MenuLeaf['action'] },
       ],
     },
   ];

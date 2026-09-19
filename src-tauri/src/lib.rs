@@ -20,6 +20,7 @@
 // 因为本机的 GNU 工具链跑不起 `cargo test` 的 libtest 可执行文件（见该文件头部说明）。
 // 对外开放的仅是**纯逻辑**部分；命令/托盘等仍按内部实现使用。
 pub mod bubble;
+pub mod chat_window;
 pub mod commands;
 pub mod config;
 pub mod display;
@@ -146,6 +147,8 @@ pub fn run() {
             commands::llm_selftest,
             commands::llm_whisper_now,
             commands::llm_chat,
+            commands::open_chat,
+            commands::close_chat,
             commands::llm_memory,
             commands::llm_memory_clear,
         ])
@@ -258,6 +261,10 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             if let Err(err) = menu_window::prepare(app, &label) {
                 eprintln!("[whale-pet] 预备菜单窗失败 {label}：{err}");
             }
+            // 对话输入窗（M3）：同样是"预建 + 隐藏"，点了就出现
+            if let Err(err) = chat_window::prepare(app, &label) {
+                eprintln!("[whale-pet] 预备对话窗失败 {label}：{err}");
+            }
         }
     }
 
@@ -341,6 +348,18 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             };
             eprintln!("[whale-pet] 启用 AI 链路探针（动作={action}，延时={delay}ms）");
             diagnostics::spawn_llm_probe(app.clone(), action, delay);
+        }
+    }
+
+    // ---- 7f. 对话窗探针（`WHALE_PET_DIAG_CHAT=<毫秒>[:消息]`）----
+    if let Ok(value) = std::env::var("WHALE_PET_DIAG_CHAT") {
+        if !value.trim().is_empty() {
+            let (delay, message) = match value.split_once(':') {
+                Some((delay, message)) => (delay.parse::<u64>().unwrap_or(3000), message.to_string()),
+                None => (value.parse::<u64>().unwrap_or(3000), String::new()),
+            };
+            eprintln!("[whale-pet] 启用对话窗探针（{delay}ms 后发送：{message}）");
+            diagnostics::spawn_chat_probe(app.clone(), delay, message);
         }
     }
 

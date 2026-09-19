@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>whale-pet 对话</title>
+    <style>
+      /*
+       * 对话输入窗：整窗透明，只有一条"胶囊输入条"可见。
+       *
+       * 与宠物/气泡窗的差别：**这个窗口可以聚焦、要吃键盘**（它是本项目唯一的例外，
+       * 见 chat_window.rs 的说明），所以这里可以有输入框、也必须有清晰的聚焦样式。
+       */
+      :root {
+        color-scheme: light dark;
+        --pad: 4px;
+        --panel: light-dark(#ffffff, #24262c);
+        --text: light-dark(#23262d, #e8e9ee);
+        --muted: light-dark(#8b909a, #9096a1);
+        --line: light-dark(#e3e4ea, #33363e);
+        --accent: light-dark(#ec6f9b, #ff86ae);
+        --shadow: light-dark(0 8px 24px rgba(28, 20, 30, 0.18), 0 8px 24px rgba(0, 0, 0, 0.45));
+        --error: light-dark(#d94f3d, #ff7b72);
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+      }
+      :root[data-theme='light'] {
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+        font: 13px/1.5 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+        color: var(--text);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      body {
+        padding: var(--pad);
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 6px 8px 6px 12px;
+        border-radius: 999px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+      }
+      .bar:focus-within {
+        border-color: var(--accent);
+      }
+      input {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        outline: none;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+      }
+      input::placeholder {
+        color: var(--muted);
+      }
+      button {
+        flex: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 4px 12px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .status {
+        margin-top: 4px;
+        padding: 0 12px;
+        font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .status.error {
+        color: var(--error);
+      }
+      .status[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <input id="input" type="text" maxlength="2000" placeholder="说点什么…（回车发送，Esc 关闭）" />
+      <button id="send" type="button">发送</button>
+    </div>
+    <div class="status" id="status" hidden></div>
+    <script type="module" src="/src/chat-page.ts"></script>
+  </body>
+</html>

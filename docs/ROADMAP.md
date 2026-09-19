@@ -107,8 +107,8 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
 - [x] **碎碎念**：按周期（默认 300s）生成一句 → 气泡显示 10s（复用上游 prompt 语义与人设默认值）
       —— 定时器在 Rust 侧（`whisper.rs`），页面只负责"说"（`runtime.ts::onWhisper`）+ 可选 whisper 动画
 - [x] **默认零联网 + 设置页开关/自检**：原始配置启动零请求；「AI」页可配 provider/模型/Key 并一键自检
-- [ ] **对话输入界面**：`llm_chat` 与 `memory.json`（最近 N 轮进上下文）**已完成并验证**，
-      但宠物角上的单行输入窗未做 —— 用户目前还没有输入入口
+- [x] **对话**：宠物角上的单行输入窗 + `memory.json` 全量记忆（最近 N 轮进上下文）+ 回复走气泡
+      —— 输入窗是本项目唯一的**可聚焦**辅助窗（要打字），托盘与右键菜单各有一个入口
 - [ ] **表情包配图**：碎碎念随机抽 / 对话按语境选（需要把 `assets/memes` 一并导入）
 - [ ] **余额**：DeepSeek + OpenCode + 自定义接口（上游 `host/balance.ts` 的 provider 表可复用）
 

@@ -65,13 +65,14 @@ export default defineConfig({
     target: 'chrome110',
     rollupOptions: {
       // 多页面入口：宠物窗（index.html）+ 气泡窗（bubble.html）+ 菜单窗（menu.html）
-      //              + 设置窗（settings.html）+ 托盘菜单窗（tray-menu.html）
+      //              + 设置窗（settings.html）+ 托盘菜单窗（tray-menu.html）+ 对话窗（chat.html）
       input: {
         main: `${rootDir}index.html`,
         bubble: `${rootDir}bubble.html`,
         menu: `${rootDir}menu.html`,
         settings: `${rootDir}settings.html`,
         trayMenu: `${rootDir}tray-menu.html`,
+        chat: `${rootDir}chat.html`,
       },
     },
   },

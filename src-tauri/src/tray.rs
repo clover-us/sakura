@@ -210,6 +210,19 @@ pub fn run_menu_action(
             Ok(())
         }
         "settings" => crate::settings_window::open(app),
+        "chat" => {
+            // 对着空气说话很奇怪：先把宠物显示出来
+            show_all(app);
+            let label = {
+                let state = app.state::<AppState>();
+                let pets = watchdog::timed_lock(&state.pets, "pets（打开对话窗）");
+                pets.keys().next().cloned()
+            };
+            match label {
+                Some(label) => crate::chat_window::open(app, &label),
+                None => Err("还没有宠物，先开一只再用对话".to_string()),
+            }
+        }
         "quit" => {
             eprintln!("[whale-pet] 托盘菜单：退出");
             QUITTING.store(true, Ordering::SeqCst);

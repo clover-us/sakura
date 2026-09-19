@@ -1032,6 +1032,14 @@ export class PetRuntime {
       this.say('气泡独立小窗已生效 ✓ 这条文字不会挡住下层点击', 6000);
       return;
     }
+    if (action.action === 'chat') {
+      // 对话输入窗由宿主创建/摆位（它要贴到命中区右上角，只有宿主知道那个几何）
+      petLog('菜单: 打开对话输入窗');
+      void invoke<void>('open_chat', { label: this.petConfig.label }).catch((err: unknown) =>
+        petLogError('对话: 打开输入窗失败', err),
+      );
+      return;
+    }
     if (action.action === 'home') {
       petLog('菜单: 回到初始位置');
       this.goHome();

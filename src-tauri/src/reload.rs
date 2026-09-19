@@ -246,6 +246,8 @@ fn close_aux_windows(app: &AppHandle) -> Vec<String> {
         .filter(|label| {
             label.starts_with(crate::bubble::BUBBLE_LABEL_PREFIX)
                 || label.starts_with(crate::menu_window::MENU_LABEL_PREFIX)
+                // 对话窗（chat-<宠物标签>）也按宠物标签派生，宠物重建后同样作废
+                || label.starts_with(crate::chat_window::CHAT_LABEL_PREFIX)
         })
         .cloned()
         .collect();

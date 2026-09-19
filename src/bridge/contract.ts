@@ -111,6 +111,8 @@ export interface PhysicsParams {
 export interface PetConfig {
   /** 窗口标签，也是本宠物的唯一标识（如 `pet-0`） */
   label: string;
+  /** 配置里的稳定 id（如 `main`）：记忆这类"跟着宠物走"的数据用它做键（label 会随增删换序变化） */
+  id: string;
   /** 显示名（调试/未来气泡用） */
   name: string;
   /**

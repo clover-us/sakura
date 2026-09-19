@@ -470,6 +470,60 @@ pub fn spawn_llm_probe(app: tauri::AppHandle, action: String, delay_ms: u64) {
     });
 }
 
+/// 排障：`WHALE_PET_DIAG_CHAT=<毫秒>[:消息]` —— 打开对话输入窗、填一句话并发送。
+///
+/// 验证的是**用户真实要走的那条路**：宿主开窗摆位（贴命中区右上角）→ 页面填入并点发送 →
+/// `llm_chat` → 记忆落盘 + 回复交给宠物页气泡。证据分布在三处（都可以 grep）：
+///   - 对话页日志：`对话: 已回复（…ms）：…`
+///   - 宠物页日志：`碎碎念: …`（回复走的就是碎碎念那条气泡链路）
+///   - `memory.json`：多了一轮 user/assistant
+pub fn spawn_chat_probe(app: tauri::AppHandle, delay_ms: u64, message: String) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        let label = {
+            let state = app.state::<crate::state::AppState>();
+            let pets = crate::watchdog::timed_lock(&state.pets, "pets（对话探针）");
+            pets.keys().next().cloned()
+        };
+        let Some(label) = label else {
+            eprintln!("[whale-pet][对话探针] 没有宠物，取消");
+            return;
+        };
+        eprintln!("[whale-pet][对话探针] 打开 {label} 的对话窗");
+        if let Err(err) = crate::chat_window::open(&app, &label) {
+            eprintln!("[whale-pet][对话探针] 打开失败：{err}");
+            return;
+        }
+        // 空消息 = **只开窗不发送**（截图用：窗口发送成功就会自己收起来）
+        if message.trim().is_empty() {
+            eprintln!("[whale-pet][对话探针] 只开窗（未发送），供截图");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let Some(window) = app.get_webview_window(&crate::chat_window::label_for(&label)) else {
+            eprintln!("[whale-pet][对话探针] 找不到对话窗");
+            return;
+        };
+        let text = serde_json::to_string(&message).unwrap_or_else(|_| "\"你好\"".to_string());
+        let script = format!(
+            r#"(function () {{
+  var input = document.getElementById('input');
+  if (!input) return 'no-input';
+  input.value = {text};
+  input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  var send = document.getElementById('send');
+  if (!send) return 'no-send';
+  send.click();
+  return 'sent';
+}})()"#
+        );
+        match window.eval(&script) {
+            Ok(()) => eprintln!("[whale-pet][对话探针] 已填入并点击发送：{message}"),
+            Err(err) => eprintln!("[whale-pet][对话探针] 注入失败：{err}"),
+        }
+    });
+}
+
 /// 当前时间戳（`YYYY-MM-DD HH:MM:SS.mmm`，本地时区不可用，统一用 UTC+0 便于对齐日志）
 fn timestamp() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();

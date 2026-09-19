@@ -116,6 +116,12 @@ pub struct PositionDto {
 pub struct PetConfigDto {
     /// 窗口标签（同时是宠物唯一标识）
     pub label: String,
+    /// 配置里的**稳定 id**（如 `main`）
+    ///
+    /// 与 `label` 的区别：label 带下标（`pet-main-0`），宠物增删/换序就会变；
+    /// "跟着这只宠物走"的数据（M3 的 `memory.json`）必须用 id 做键，
+    /// 否则用户把宠物顺序调一下，记忆就"换了个人"。
+    pub id: String,
     /// 显示名
     pub name: String,
     /// 包围盒宽度（像素）

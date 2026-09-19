@@ -137,6 +137,21 @@ fn log_failure(failure: &Failure, label: &str, elapsed: Duration) {
     }
 }
 
+/// 把一句话交给宠物页显示（气泡 + 可选动画）。
+///
+/// 碎碎念与**对话回复**共用这条链路（与上游一致）：回复不在输入框里堆历史，
+/// 而是让宠物"说出来"——这正是桌宠该有的样子。
+pub fn emit(app: &AppHandle, label: &str, text: &str) {
+    let Some(window) = app.get_webview_window(label) else {
+        eprintln!("[whale-pet] 找不到宠物窗口 {label}，这条话没人显示：{text}");
+        return;
+    };
+    let payload = WhisperEvent { pet_label: label.to_string(), text: text.to_string() };
+    if let Err(err) = window.emit(crate::pet_window::EVENT_WHISPER, payload) {
+        eprintln!("[whale-pet] 碎碎念下发失败 {label}：{err}");
+    }
+}
+
 /// 手动触发一次（设置窗口的"现在说一句"按钮 / 自检）
 pub fn say_now(app: &AppHandle, label: &str, name: &str) -> Result<String, Failure> {
     let (config, app_data_dir) = {
@@ -147,11 +162,6 @@ pub fn say_now(app: &AppHandle, label: &str, name: &str) -> Result<String, Failu
         return Err(Failure::Disabled);
     }
     let text = crate::llm::whisper(&config.llm, &app_data_dir, name)?;
-    if let Some(window) = app.get_webview_window(label) {
-        let payload = WhisperEvent { pet_label: label.to_string(), text: text.clone() };
-        if let Err(err) = window.emit(crate::pet_window::EVENT_WHISPER, payload) {
-            eprintln!("[whale-pet] 碎碎念下发失败 {label}：{err}");
-        }
-    }
+    emit(app, label, &text);
     Ok(text)
 }

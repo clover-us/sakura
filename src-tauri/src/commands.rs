@@ -759,22 +759,44 @@ pub async fn llm_whisper_now(app: AppHandle, label: String, name: String) -> Res
     crate::whisper::say_now(&app, &label, &name).map_err(LlmErrorDto::from)
 }
 
-/// 一轮对话：读记忆 → 请求 → 写记忆 → 返回回复文本（由页面显示在气泡里）
+/// 一轮对话：读记忆 → 请求 → 写记忆 → 把回复交给宠物页的气泡显示。
+///
+/// 参数只有 `label` 与用户输入：宠物 id 与显示名**从宿主侧查**（`with_pet` 那条路），
+/// 这样对话窗的 URL 不必携带会过期的宠物信息（配置热重载后 id/名字可能已经变了）。
 #[tauri::command]
-pub async fn llm_chat(
-    app: AppHandle,
-    pet_id: String,
-    name: String,
-    text: String,
-) -> Result<String, LlmErrorDto> {
-    let (config, app_data_dir) = {
+pub async fn llm_chat(app: AppHandle, label: String, text: String) -> Result<String, LlmErrorDto> {
+    let (config, app_data_dir, pet_id, name) = {
         let state = app.state::<AppState>();
-        (state.config_snapshot(), state.app_data_dir.clone())
+        let (pet_id, name) = {
+            let pets = watchdog::timed_lock(&state.pets, "pets（对话）");
+            let runtime = pets.get(&label).ok_or_else(|| LlmErrorDto {
+                reason: "bad-response".to_string(),
+                message: format!("找不到窗口标签为 {label} 的宠物"),
+            })?;
+            (runtime.config.id.clone(), runtime.config.name.clone())
+        };
+        (state.config_snapshot(), state.app_data_dir.clone(), pet_id, name)
     };
     if !config.llm.chat_ready() {
         return Err(LlmErrorDto::from(crate::llm::Failure::Disabled));
     }
-    crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, &text).map_err(LlmErrorDto::from)
+    let reply = crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, &text)
+        .map_err(LlmErrorDto::from)?;
+    // 回复交给宠物页的气泡（与碎碎念同一条链路）：输入框里不堆聊天记录，宠物"说出来"
+    crate::whisper::emit(&app, &label, &reply);
+    Ok(reply)
+}
+
+/// 打开某只宠物的对话输入窗（托盘/右键菜单调用）
+#[tauri::command]
+pub fn open_chat(app: AppHandle, label: String) -> Result<(), String> {
+    crate::chat_window::open(&app, &label)
+}
+
+/// 关闭对话输入窗（页面上的 Esc / 发送成功后自己调）
+#[tauri::command]
+pub fn close_chat(app: AppHandle, label: String) -> Result<(), String> {
+    crate::chat_window::close(&app, &label)
 }
 
 /// 读某只宠物的记忆（设置窗口展示 / 排障）

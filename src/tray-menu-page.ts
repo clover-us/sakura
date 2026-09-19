@@ -86,6 +86,8 @@ const ICONS: Record<string, string> = {
   settings:
     '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  'message-circle':
+    '<path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
 };
 
@@ -206,6 +208,10 @@ function renderMenu(): void {
           <span class="label">动作点播</span>
           <span class="chev">${icon('chevron', 14)}</span>
         </button>
+        <button class="item" data-act="chat">
+          ${icon('message-circle')}
+          <span class="label">说两句…</span>
+        </button>
         <div class="sep"></div>
         <button class="item" data-act="settings">
           ${icon('settings')}
@@ -226,6 +232,7 @@ function renderMenu(): void {
         const action = button.dataset.act ?? '';
         if (action === 'toggle') void act('toggle');
         else if (action === 'home') void act('home');
+        else if (action === 'chat') void act('chat');
         else if (action === 'settings') void act('settings');
         else if (action === 'quit') void act('quit');
         else if (action === 'picker') showPicker(pickerPet);

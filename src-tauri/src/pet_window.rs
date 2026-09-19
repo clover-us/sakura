@@ -354,6 +354,7 @@ fn create_one<R: Runtime>(
         state,
         config: PetConfigDto {
             label: label.clone(),
+            id: pet.id.clone(),
             name: pet.name.clone(),
             size: pet.size,
             aspect_ratio: ASPECT_RATIO,
