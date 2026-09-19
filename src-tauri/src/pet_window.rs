@@ -30,6 +30,9 @@ pub const EVENT_DISPLAYS: &str = "pet://displays";
 /// 事件名：右键菜单里点了某一项（菜单是独立小窗，动作经宿主转回宠物页执行）
 pub const EVENT_MENU_ACTION: &str = "pet://menu-action";
 
+/// 碎碎念（M3）：宿主生成一句话 → 页面弹气泡（可选再播一条 whisper 动画）
+pub const EVENT_WHISPER: &str = "pet://whisper";
+
 /// 动画画布宽高比（高/宽）：素材是 640×360，桌面端沿用同一比例
 pub const ASPECT_RATIO: f64 = 9.0 / 16.0;
 

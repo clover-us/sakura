@@ -626,3 +626,170 @@ pub fn tray_menu_action(
 pub fn resize_tray_menu(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
     crate::tray_menu::resize(&app, width, height)
 }
+
+// ============================================================================
+//  AI（M3）：状态 / 密钥 / 自检 / 碎碎念 / 对话 / 记忆
+//
+//  与其它命令不同，这一组的失败**返回结构化原因**（`LlmErrorDto`）而不是一句中文：
+//  UI 需要按原因给出"该去改哪里"的提示（没填 key / 超时 / 401 / 限流），
+//  只给一句字符串的话，前端就得去正则匹配中文，那是更糟的设计。
+//
+//  另外这一组的调用一律声明成 `async`：HTTP 会阻塞几秒到几十秒，
+//  而**同步命令跑在主线程上**（事件循环），压在那里界面与穿透自愈都会停摆。
+// ============================================================================
+
+/// 结构化失败（前端据此显示提示）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmErrorDto {
+    /// 机器可读原因：disabled / no-key / no-model / offline / timeout / unauthorized / rate-limited / http-error / bad-response
+    pub reason: String,
+    /// 给人看的中文说明
+    pub message: String,
+}
+
+impl From<crate::llm::Failure> for LlmErrorDto {
+    fn from(failure: crate::llm::Failure) -> Self {
+        LlmErrorDto { reason: failure.reason().to_string(), message: failure.message() }
+    }
+}
+
+/// AI 当前状态（设置窗口的「AI」页与自检都用它）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmStatusDto {
+    pub enabled: bool,
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f64,
+    pub timeout_sec: u64,
+    pub whisper_enabled: bool,
+    pub whisper_interval_sec: u64,
+    pub chat_enabled: bool,
+    pub chat_memory_rounds: u32,
+    pub persona: String,
+    /// 本机是否已存过 key
+    pub has_key: bool,
+    /// key 的打码提示（**绝不含明文**）
+    pub key_hint: Option<String>,
+    /// 密钥文件路径（设置窗口显示给用户）
+    pub key_path: String,
+    /// 记忆文件路径
+    pub memory_path: String,
+    /// 该 provider 是否需要 key（ollama 不需要）
+    pub needs_key: bool,
+}
+
+/// 记忆里的一条消息
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryMessageDto {
+    pub role: String,
+    pub content: String,
+    pub ts: u64,
+}
+
+fn llm_status_of(app_data_dir: &std::path::Path, config: &crate::config::AppConfig) -> LlmStatusDto {
+    let store = crate::secret::SecretStore::new(app_data_dir);
+    let key = store.load().ok().flatten();
+    LlmStatusDto {
+        enabled: config.llm.enabled,
+        provider: config.llm.provider.clone(),
+        base_url: config.llm.effective_base_url().unwrap_or_default(),
+        model: config.llm.effective_model().unwrap_or_default(),
+        temperature: config.llm.temperature,
+        timeout_sec: config.llm.timeout_sec,
+        whisper_enabled: config.llm.whisper.enabled,
+        whisper_interval_sec: config.llm.whisper.interval_sec,
+        chat_enabled: config.llm.chat.enabled,
+        chat_memory_rounds: config.llm.chat.memory_rounds,
+        persona: config.llm.effective_persona(),
+        has_key: key.is_some(),
+        key_hint: key.as_deref().map(crate::secret::mask),
+        key_path: store.path().display().to_string(),
+        memory_path: crate::memory::MemoryStore::new(app_data_dir).path().display().to_string(),
+        needs_key: crate::config::provider_needs_key(config.llm.provider.trim()),
+    }
+}
+
+/// 取 AI 状态
+#[tauri::command]
+pub fn llm_status(state: State<'_, AppState>) -> Result<LlmStatusDto, String> {
+    let config = state.config_snapshot();
+    Ok(llm_status_of(&state.app_data_dir, &config))
+}
+
+/// 保存 API key（DPAPI 加密后写入 `llm-key.bin`；**不写进配置文件**）
+#[tauri::command]
+pub fn llm_save_key(state: State<'_, AppState>, key: String) -> Result<LlmStatusDto, String> {
+    let store = crate::secret::SecretStore::new(&state.app_data_dir);
+    store.save(&key)?;
+    let config = state.config_snapshot();
+    Ok(llm_status_of(&state.app_data_dir, &config))
+}
+
+/// 清除已保存的 API key
+#[tauri::command]
+pub fn llm_clear_key(state: State<'_, AppState>) -> Result<LlmStatusDto, String> {
+    let store = crate::secret::SecretStore::new(&state.app_data_dir);
+    store.clear()?;
+    let config = state.config_snapshot();
+    Ok(llm_status_of(&state.app_data_dir, &config))
+}
+
+/// 连通性自检：真发一次最小请求，返回模型回的那句话
+#[tauri::command]
+pub async fn llm_selftest(app: AppHandle) -> Result<String, LlmErrorDto> {
+    let (config, app_data_dir, name) = {
+        let state = app.state::<AppState>();
+        let config = state.config_snapshot();
+        let name = {
+            let pets = watchdog::timed_lock(&state.pets, "pets（自检）");
+            pets.values().next().map(|runtime| runtime.config.name.clone()).unwrap_or_default()
+        };
+        (config, state.app_data_dir.clone(), name)
+    };
+    crate::llm::selftest(&config.llm, &app_data_dir, &name).map_err(LlmErrorDto::from)
+}
+
+/// 现在就让某只宠物说一句（设置窗口的按钮 / 手动验证）
+#[tauri::command]
+pub async fn llm_whisper_now(app: AppHandle, label: String, name: String) -> Result<String, LlmErrorDto> {
+    crate::whisper::say_now(&app, &label, &name).map_err(LlmErrorDto::from)
+}
+
+/// 一轮对话：读记忆 → 请求 → 写记忆 → 返回回复文本（由页面显示在气泡里）
+#[tauri::command]
+pub async fn llm_chat(
+    app: AppHandle,
+    pet_id: String,
+    name: String,
+    text: String,
+) -> Result<String, LlmErrorDto> {
+    let (config, app_data_dir) = {
+        let state = app.state::<AppState>();
+        (state.config_snapshot(), state.app_data_dir.clone())
+    };
+    if !config.llm.chat_ready() {
+        return Err(LlmErrorDto::from(crate::llm::Failure::Disabled));
+    }
+    crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, &text).map_err(LlmErrorDto::from)
+}
+
+/// 读某只宠物的记忆（设置窗口展示 / 排障）
+#[tauri::command]
+pub fn llm_memory(state: State<'_, AppState>, pet_id: String) -> Result<Vec<MemoryMessageDto>, String> {
+    let store = crate::memory::MemoryStore::new(&state.app_data_dir);
+    Ok(store
+        .all(&pet_id)
+        .into_iter()
+        .map(|message| MemoryMessageDto { role: message.role, content: message.content, ts: message.ts })
+        .collect())
+}
+
+/// 清空某只宠物的记忆
+#[tauri::command]
+pub fn llm_memory_clear(state: State<'_, AppState>, pet_id: String) -> Result<(), String> {
+    crate::memory::MemoryStore::new(&state.app_data_dir).clear(&pet_id)
+}

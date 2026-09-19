@@ -182,8 +182,7 @@ pub struct AnimationWeights {
 /// 配置文件根结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AppConfig {
-    /// 配置版本号（将来做迁移用；M0 校验为 1）
+pub struct AppConfig {    /// 配置版本号（将来做迁移用；M0 校验为 1）
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     /// 拖拽抛掷物理参数
@@ -199,6 +198,156 @@ pub struct AppConfig {
     /// 动画链顶层权重（缺失时回落 10/5/5，与上游默认一致）
     #[serde(default = "default_animation_weights")]
     pub animation_weights: AnimationWeights,
+    /// LLM 能力（M3）。
+    ///
+    /// **默认整段关闭**：新装的应用不会发起任何网络请求。设计说明见 `docs/LLM.md`。
+    /// **密钥不在这里**：它由 DPAPI 加密后单独存在 `llm-key.bin`（见 `secret.rs`），
+    /// 因为 config.jsonc 是用户会备份、会贴出来、会放进 git 的文件。
+    #[serde(default)]
+    pub llm: LlmConfig,
+}
+
+/// LLM 配置（M3）：provider / 模型 / 两个功能开关
+///
+/// **注意 `Default` 是手写的**（见下方 impl）：`#[serde(default)]` 在"配置里没有 llm 段"时
+/// 会调用 `Default::default()`，如果它与字段级 `#[serde(default = "…")]` 不是同一套值，
+/// 就会出现"老配置 + 空 provider → 校验失败 → 应用起不来"。
+/// 这个坑是冒烟检查抓出来的（`合法配置通过校验` 那一项）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmConfig {
+    /// 总开关：`false` = 绝不联网（功能与自检都会直接拒绝）
+    #[serde(default)]
+    pub enabled: bool,
+    /// 服务商：`deepseek` / `openai` / `ollama` / `custom`
+    #[serde(default = "default_llm_provider")]
+    pub provider: String,
+    /// 覆盖用的接口前缀（空 = 用 provider 预置值；`custom` 必填）
+    #[serde(default)]
+    pub base_url: String,
+    /// 模型名（空 = 用 provider 预置默认）
+    #[serde(default)]
+    pub model: String,
+    /// 采样温度（与上游一致：默认 1.0）
+    #[serde(default = "default_llm_temperature")]
+    pub temperature: f64,
+    /// 单次请求超时（秒）
+    #[serde(default = "default_llm_timeout_sec")]
+    pub timeout_sec: u64,
+    /// 碎碎念
+    #[serde(default)]
+    pub whisper: WhisperConfig,
+    /// 对话
+    #[serde(default)]
+    pub chat: ChatConfig,
+}
+
+/// 碎碎念配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhisperConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 周期（秒）：默认 300，与上游 `eventsRefreshSec.whisper` 一致
+    #[serde(default = "default_whisper_interval_sec")]
+    pub interval_sec: u64,
+    /// 人设（system prompt 的主体）；留空用内置默认（见 [`default_llm_persona`]）
+    #[serde(default)]
+    pub persona: String,
+}
+
+/// 对话配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 送进上下文的轮数（1 轮 = 1 问 1 答）：默认 5，与上游 `chatMemoryRounds` 一致
+    #[serde(default = "default_chat_memory_rounds")]
+    pub memory_rounds: u32,
+}
+
+fn default_llm_provider() -> String {
+    "deepseek".to_string()
+}
+
+// ---------------------------------------------------------------------------
+//  三个 `Default` 手写实现：**必须与字段级 serde 默认值一致**
+//
+//  `#[serde(default)]`（不带函数名）在字段缺失时调用 `Default::default()`，
+//  而这里每个字段又各自写了 `#[serde(default = "…")]`。两套默认值一旦不一致，
+//  "配置文件里没有 llm 段" 就会得到一份**非法**配置（provider 为空 → 校验失败 → 应用起不来）。
+//  手工维护两份容易漏，所以这里统一用"从 `{}` 反序列化"来构造：
+//  它就是字段默认值的**唯一真相**，改字段时不可能不同步。
+// ---------------------------------------------------------------------------
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("LlmConfig 的字段默认值应当自洽")
+    }
+}
+
+impl Default for WhisperConfig {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("WhisperConfig 的字段默认值应当自洽")
+    }
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("ChatConfig 的字段默认值应当自洽")
+    }
+}
+
+const fn default_llm_temperature() -> f64 {
+    1.0
+}
+
+const fn default_llm_timeout_sec() -> u64 {
+    60
+}
+
+const fn default_whisper_interval_sec() -> u64 {
+    300
+}
+
+const fn default_chat_memory_rounds() -> u32 {
+    5
+}
+
+/// 内置默认人设。
+///
+/// 上游那句是"Q版蓝发小女仆"（`assets/config.jsonc:8`）；本项目的角色是小鲸鱼，
+/// 所以按同样的句式改写，**语气与约束一字不动**（20 字以内、不提 AI、不要解释自己）：
+/// 这样两只桌宠说话的手感是一致的，只有"是谁"不同。
+pub fn default_llm_persona() -> &'static str {
+    "你是主人桌面上的Q版小鲸鱼桌宠，会时不时碎碎念一句。说话要自然随意、短短一句（20字以内），温柔乖巧带点俏皮，说人话不啰嗦，不要解释你自己，不要提你是AI。"
+}
+
+/// provider 预置的接口前缀
+pub fn provider_base_url(provider: &str) -> Option<&'static str> {
+    match provider {
+        "deepseek" => Some("https://api.deepseek.com"),
+        "openai" => Some("https://api.openai.com/v1"),
+        "ollama" => Some("http://127.0.0.1:11434/v1"),
+        // custom 必须自己填 baseUrl
+        _ => None,
+    }
+}
+
+/// provider 预置的默认模型
+pub fn provider_default_model(provider: &str) -> Option<&'static str> {
+    match provider {
+        "deepseek" => Some("deepseek-chat"),
+        "openai" => Some("gpt-4o-mini"),
+        "ollama" => Some("qwen2.5:7b"),
+        _ => None,
+    }
+}
+
+/// 该 provider 是否需要 API key（本地 Ollama 不需要）
+pub fn provider_needs_key(provider: &str) -> bool {
+    provider != "ollama"
 }
 
 impl AppConfig {
@@ -231,6 +380,7 @@ impl AppConfig {
         }
         self.physics.validate()?;
         self.validate_animations()?;
+        self.llm.validate()?;
         Ok(())
     }
 
@@ -265,6 +415,84 @@ impl AppConfig {
     /// 这只宠物是否自定义了行为（覆盖了动画池或权重）——UI 与日志都要用
     pub fn pet_has_custom_behaviour(pet: &PetEntry) -> bool {
         pet.animations.is_some() || pet.animation_weights.is_some()
+    }
+}
+
+/// 校验一份动画池 + 权重；`where_` 是给用户看的作用域（"全局" / "宠物 小鲸鱼"）
+impl LlmConfig {
+    /// 校验 LLM 段（只校验"形状"，不校验"能不能连上"——那是自检命令的事）
+    pub fn validate(&self) -> Result<(), String> {
+        let provider = self.provider.trim();
+        if !matches!(provider, "deepseek" | "openai" | "ollama" | "custom") {
+            return Err(format!(
+                "llm.provider 只支持 deepseek / openai / ollama / custom，当前为 {provider:?}"
+            ));
+        }
+        if provider == "custom" && self.base_url.trim().is_empty() {
+            return Err("llm.provider = custom 时必须填 llm.baseUrl".to_string());
+        }
+        if !self.base_url.trim().is_empty() && !self.base_url.starts_with("http") {
+            return Err("llm.baseUrl 必须以 http:// 或 https:// 开头".to_string());
+        }
+        if !(self.temperature.is_finite() && (0.0..=2.0).contains(&self.temperature)) {
+            return Err(format!("llm.temperature 必须在 0~2 之间，当前为 {}", self.temperature));
+        }
+        if !(5..=300).contains(&self.timeout_sec) {
+            return Err(format!("llm.timeoutSec 必须在 5~300 秒之间，当前为 {}", self.timeout_sec));
+        }
+        if self.whisper.enabled && self.whisper.interval_sec < 30 {
+            // 太短的周期会把接口打成刷屏（也会烧钱）
+            return Err(format!(
+                "llm.whisper.intervalSec 至少 30 秒，当前为 {}",
+                self.whisper.interval_sec
+            ));
+        }
+        if self.chat.memory_rounds > 50 {
+            return Err(format!("llm.chat.memoryRounds 最多 50，当前为 {}", self.chat.memory_rounds));
+        }
+        Ok(())
+    }
+
+    /// 实际使用的接口前缀（provider 预置值，或用户覆盖）
+    pub fn effective_base_url(&self) -> Result<String, String> {
+        let custom = self.base_url.trim();
+        if !custom.is_empty() {
+            return Ok(custom.trim_end_matches('/').to_string());
+        }
+        provider_base_url(self.provider.trim())
+            .map(|url| url.to_string())
+            .ok_or_else(|| "provider = custom 时必须填 baseUrl".to_string())
+    }
+
+    /// 实际使用的模型名
+    pub fn effective_model(&self) -> Result<String, String> {
+        let model = self.model.trim();
+        if !model.is_empty() {
+            return Ok(model.to_string());
+        }
+        provider_default_model(self.provider.trim())
+            .map(|m| m.to_string())
+            .ok_or_else(|| "provider = custom 时必须填 model".to_string())
+    }
+
+    /// 人设：用户填了就用用户的
+    pub fn effective_persona(&self) -> String {
+        let persona = self.whisper.persona.trim();
+        if persona.is_empty() {
+            default_llm_persona().to_string()
+        } else {
+            persona.to_string()
+        }
+    }
+
+    /// 这个功能此刻是否可用（总开关 + 功能开关都开）
+    pub fn whisper_ready(&self) -> bool {
+        self.enabled && self.whisper.enabled
+    }
+
+    /// 对话此刻是否可用
+    pub fn chat_ready(&self) -> bool {
+        self.enabled && self.chat.enabled
     }
 }
 

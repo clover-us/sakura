@@ -355,6 +355,97 @@ pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, mode: &'stati
     });
 }
 
+/// 排障：`WHALE_PET_DIAG_LLM=status|selftest|whisper|chat|all` —— AI 链路的**进程内自测**入口。
+///
+/// 为什么需要它：AI 这条链路要验证的是"配置 → 密钥 → 请求组装 → 响应解析 → 记忆/气泡"，
+/// 而其中请求组装与错误分支可以完全对着**本地 mock 服务端**（`cargo run --bin mock-llm`）跑，
+/// 不需要真实 API key。探针把这些动作按顺序执行并把结果打进日志，
+/// 于是"有没有跑通"变成可 grep 的证据（见 `VERIFICATION.md` 第 13 节）。
+///
+/// 只在显式设置环境变量时执行，不参与正常运行路径。
+pub fn spawn_llm_probe(app: tauri::AppHandle, action: String, delay_ms: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        let state = app.state::<crate::state::AppState>();
+        let config = state.config_snapshot();
+        let app_data_dir = state.app_data_dir.clone();
+        let (label, name, pet_id) = {
+            let pets = crate::watchdog::timed_lock(&state.pets, "pets（LLM 探针）");
+            pets.values()
+                .next()
+                .map(|runtime| {
+                    (
+                        runtime.label().to_string(),
+                        runtime.config.name.clone(),
+                        runtime.config.label.trim_start_matches("pet-").to_string(),
+                    )
+                })
+                .unwrap_or_else(|| ("pet-main-0".into(), "小鲸鱼".into(), "main".into()))
+        };
+
+        eprintln!(
+            "[whale-pet][LLM 探针] 动作={action} provider={} baseUrl={} model={} enabled={}",
+            config.llm.provider,
+            config.llm.effective_base_url().unwrap_or_default(),
+            config.llm.effective_model().unwrap_or_default(),
+            config.llm.enabled
+        );
+
+        let want = |what: &str| action == "all" || action == what;
+
+        if want("status") {
+            let store = crate::secret::SecretStore::new(&app_data_dir);
+            let key = store.load().ok().flatten();
+            eprintln!(
+                "[whale-pet][LLM 探针] 状态：hasKey={} keyHint={:?} 密钥文件={}",
+                key.is_some(),
+                key.as_deref().map(crate::secret::mask),
+                store.path().display()
+            );
+        }
+
+        if want("selftest") {
+            match crate::llm::selftest(&config.llm, &app_data_dir, &name) {
+                Ok(text) => eprintln!("[whale-pet][LLM 探针] 自检成功：{text}"),
+                Err(failure) => {
+                    eprintln!("[whale-pet][LLM 探针] 自检失败（{}）：{}", failure.reason(), failure.message())
+                }
+            }
+        }
+
+        if want("whisper") {
+            match crate::whisper::say_now(&app, &label, &name) {
+                Ok(text) => eprintln!("[whale-pet][LLM 探针] 碎碎念成功：{text}"),
+                Err(failure) => {
+                    eprintln!("[whale-pet][LLM 探针] 碎碎念失败（{}）：{}", failure.reason(), failure.message())
+                }
+            }
+        }
+
+        if want("chat") {
+            match crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, "你好呀，今天过得怎么样？") {
+                Ok(text) => {
+                    eprintln!("[whale-pet][LLM 探针] 对话成功：{text}");
+                    let memory = crate::memory::MemoryStore::new(&app_data_dir);
+                    let all = memory.all(&pet_id);
+                    eprintln!(
+                        "[whale-pet][LLM 探针] 记忆文件 {}：{} 条（最近一轮：{:?} → {:?}）",
+                        memory.path().display(),
+                        all.len(),
+                        all.iter().rev().nth(1).map(|m| m.content.clone()),
+                        all.last().map(|m| m.content.clone())
+                    );
+                }
+                Err(failure) => {
+                    eprintln!("[whale-pet][LLM 探针] 对话失败（{}）：{}", failure.reason(), failure.message())
+                }
+            }
+        }
+
+        eprintln!("[whale-pet][LLM 探针] 动作结束：{action}");
+    });
+}
+
 /// 当前时间戳（`YYYY-MM-DD HH:MM:SS.mmm`，本地时区不可用，统一用 UTC+0 便于对齐日志）
 fn timestamp() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();

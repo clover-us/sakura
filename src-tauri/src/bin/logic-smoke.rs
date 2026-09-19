@@ -407,7 +407,194 @@ fn main() {
         }
     }
 
-    // ---- 汇总 ----
+    // ---- 12. AI（M3）：配置校验 / 请求组装 / 响应解析 / 密钥存储 / 记忆 ----
+    //
+    // 这一段是"不需要网络、不需要真实 key"就能钉死的部分。真正的 HTTP 链路由
+    // `cargo run --bin mock-llm` + `WHALE_PET_DIAG_LLM=all` 端到端验证（见 VERIFICATION 第 13 节）。
+    println!("\n[12] AI 适配层（M3）");
+    {
+        use whale_pet_desktop_lib::config::LlmConfig;
+        use whale_pet_desktop_lib::llm::{extract_assistant_text, ChatMessage, Client, Failure};
+
+        // ---- 12a. 配置校验的拒绝路径 ----
+        let base_llm = |provider: &str, base_url: &str| {
+            let mut llm = LlmConfig::default();
+            llm.provider = provider.to_string();
+            llm.base_url = base_url.to_string();
+            llm
+        };
+        check(
+            "未知 provider 被拒绝",
+            base_llm("anthropic", "").validate().is_err(),
+            "未知 provider 通过了校验",
+        );
+        check(
+            "custom 缺 baseUrl 被拒绝",
+            base_llm("custom", "").validate().is_err(),
+            "custom 没填 baseUrl 也通过了",
+        );
+        check(
+            "baseUrl 不是 http(s) 被拒绝",
+            base_llm("custom", "ftp://x").validate().is_err(),
+            "非 http(s) 的 baseUrl 通过了",
+        );
+        let mut hot = base_llm("deepseek", "");
+        hot.temperature = 3.0;
+        check("温度越界被拒绝", hot.validate().is_err(), "温度 3.0 通过了");
+        let mut fast = base_llm("deepseek", "");
+        fast.whisper.enabled = true;
+        fast.whisper.interval_sec = 5;
+        check("碎碎念周期过短被拒绝", fast.validate().is_err(), "5 秒周期通过了");
+        let mut ok = base_llm("deepseek", "");
+        ok.whisper.enabled = true;
+        ok.whisper.interval_sec = 300;
+        check("合法配置通过校验", ok.validate().is_ok(), &format!("{:?}", ok.validate().err()));
+
+        // ---- 12b. provider 预置值 ----
+        check(
+            "deepseek 预置 baseUrl / model",
+            ok.effective_base_url().unwrap_or_default() == "https://api.deepseek.com"
+                && ok.effective_model().unwrap_or_default() == "deepseek-chat",
+            "预置值不对",
+        );
+        check("ollama 不需要 key", !whale_pet_desktop_lib::config::provider_needs_key("ollama"), "");
+        check("deepseek 需要 key", whale_pet_desktop_lib::config::provider_needs_key("deepseek"), "");
+
+        // ---- 12c. 请求组装 ----
+        let mut cfg = base_llm("custom", "http://127.0.0.1:8787");
+        cfg.model = "mock".to_string();
+        cfg.temperature = 1.0;
+        let client = Client::new(&cfg, None);
+        let system = client.system_prompt("小鲸鱼");
+        check(
+            "system prompt = 人设 + 名字声明",
+            system.contains("不要提你是AI") && system.ends_with("你的名字是“小鲸鱼”。"),
+            &system,
+        );
+        let history = vec![ChatMessage::user("上一轮问题"), ChatMessage::assistant("上一轮回答")];
+        let messages = client.build_messages("小鲸鱼", &history, "这一轮问题");
+        check(
+            "消息顺序 = system + 历史 + 本轮",
+            messages.len() == 4
+                && messages[0].role == "system"
+                && messages[1].content == "上一轮问题"
+                && messages[3].content == "这一轮问题",
+            "消息顺序不对",
+        );
+        match client.request_body(&messages) {
+            Ok(body) => {
+                check(
+                    "请求体含 model / temperature / stream=false",
+                    body["model"] == "mock" && body["temperature"] == 1.0 && body["stream"] == false,
+                    &body.to_string(),
+                );
+                check("请求体不传 maxTokens（与上游一致）", body.get("max_tokens").is_none(), "多传了 maxTokens");
+            }
+            Err(err) => check("请求体可构造", false, err.reason()),
+        }
+
+        // ---- 12d. 响应解析（含各家形状与失败）----
+        check(
+            "标准形状取到文本",
+            extract_assistant_text(r#"{"choices":[{"message":{"content":" 你好 "}}]}"#).unwrap_or_default() == "你好",
+            "标准形状解析失败",
+        );
+        check(
+            "内容块数组也认",
+            extract_assistant_text(r#"{"choices":[{"message":{"content":[{"type":"text","text":"甲"},{"type":"text","text":"乙"}]}}]}"#)
+                .unwrap_or_default()
+                == "甲乙",
+            "块数组没拼出来",
+        );
+        check(
+            "空内容报『模型未返回文本』",
+            matches!(extract_assistant_text(r#"{"choices":[{"message":{"content":"   "}}]}"#), Err(Failure::BadResponse(ref m)) if m.contains("模型未返回文本")),
+            "空内容没被识别",
+        );
+        check(
+            "200 里的 error 字段被识别",
+            matches!(extract_assistant_text(r#"{"error":{"message":"quota"}}"#), Err(Failure::BadResponse(ref m)) if m.contains("quota")),
+            "error 字段被忽略",
+        );
+        check(
+            "非 JSON 报 bad-response",
+            matches!(extract_assistant_text("not json"), Err(Failure::BadResponse(_))),
+            "非 JSON 被当成功",
+        );
+
+        // ---- 12e. 密钥存储（DPAPI，本机可用）----
+        let dir = std::env::temp_dir().join("whale-pet-smoke-secret");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let store = whale_pet_desktop_lib::secret::SecretStore::new(&dir);
+        let secret = "sk-smoke-test-1234567890";
+        match store.save(secret) {
+            Ok(()) => {
+                check("密钥可保存", store.exists(), "保存后文件不存在");
+                check(
+                    "密钥可读回（DPAPI 往返）",
+                    store.load().ok().flatten().as_deref() == Some(secret),
+                    "读回的密钥不一致",
+                );
+                let raw = std::fs::read(store.path()).unwrap_or_default();
+                let raw_text = String::from_utf8_lossy(&raw);
+                check(
+                    "落盘内容**不含明文**",
+                    !raw_text.contains(secret),
+                    "密钥文件里出现了明文！",
+                );
+                if let Err(err) = store.clear() {
+                    check("密钥可删除", false, &err);
+                } else {
+                    check("密钥可删除", !store.exists() && store.load().ok().flatten().is_none(), "删除后仍能读到");
+                }
+            }
+            Err(err) => check("密钥可保存", false, &err),
+        }
+        check(
+            "打码形态不泄露内容",
+            {
+                let masked = whale_pet_desktop_lib::secret::mask(secret);
+                !masked.contains("smoke") && masked.starts_with("sk-")
+            },
+            "mask 泄露了中间内容",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // ---- 12f. 记忆：全量保存 + 只取最近 N 轮 + 损坏自愈 ----
+        use whale_pet_desktop_lib::memory::MemoryStore;
+        let dir = std::env::temp_dir().join("whale-pet-smoke-memory");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let memory = MemoryStore::new(&dir);
+        for round in 1..=3 {
+            let _ = memory.append_round("main", &format!("问题{round}"), &format!("回答{round}"));
+        }
+        let all = memory.all("main");
+        check("三轮对话共 6 条全量保存", all.len() == 6, &format!("实际 {} 条", all.len()));
+        let recent = memory.recent_messages("main", 1);
+        check(
+            "只取最近 1 轮 = 2 条",
+            recent.len() == 2 && recent[0].content == "问题3" && recent[1].content == "回答3",
+            "最近 N 轮截取不对",
+        );
+        check("别的宠物互不干扰", memory.all("other").is_empty(), "串台了");
+        // 写坏文件 → 下次读应当自愈（并留下备份）
+        let _ = std::fs::write(memory.path(), "{ 这不是合法 JSON");
+        let recovered = memory.all("main");
+        check("记忆损坏后自愈为空记忆", recovered.is_empty(), "损坏文件没被兜住");
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| entry.file_name().to_string_lossy().contains(".bak-"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        check("损坏的记忆留下了备份", !backups.is_empty(), "没有生成 .bak- 备份");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // SAFETY: 单线程
     let (passed, failed) = unsafe { (PASSED, FAILED) };
     println!("\n=== 结果：通过 {passed} 项，失败 {failed} 项 ===");

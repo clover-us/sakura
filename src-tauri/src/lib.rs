@@ -23,8 +23,9 @@ pub mod bubble;
 pub mod commands;
 pub mod config;
 pub mod display;
-
+pub mod llm;
 pub mod menu_window;
+pub mod memory;
 pub mod model;
 pub mod pet_protocol;
 pub mod reload;
@@ -33,6 +34,7 @@ pub mod settings_window;
 pub mod state;
 pub mod tray;
 pub mod tray_menu;
+pub mod whisper;
 pub mod watchdog;
 
 mod diagnostics;
@@ -137,6 +139,15 @@ pub fn run() {
             commands::get_tray_menu_state,
             commands::tray_menu_action,
             commands::resize_tray_menu,
+            // M3：AI（状态 / 密钥 / 自检 / 碎碎念 / 对话 / 记忆）
+            commands::llm_status,
+            commands::llm_save_key,
+            commands::llm_clear_key,
+            commands::llm_selftest,
+            commands::llm_whisper_now,
+            commands::llm_chat,
+            commands::llm_memory,
+            commands::llm_memory_clear,
         ])
         .build(tauri::generate_context!())
         .expect("初始化 Tauri 应用失败")
@@ -321,6 +332,18 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         diagnostics::spawn_tray_menu_probe(app.clone(), delay, mode);
     }
 
+    // ---- 7e. AI 链路探针（`WHALE_PET_DIAG_LLM=status|selftest|whisper|chat|all[:延时ms]`）----
+    if let Ok(value) = std::env::var("WHALE_PET_DIAG_LLM") {
+        if !value.trim().is_empty() {
+            let (action, delay) = match value.split_once(':') {
+                Some((action, delay)) => (action.to_string(), delay.parse::<u64>().unwrap_or(3000)),
+                None => (value.clone(), 3000),
+            };
+            eprintln!("[whale-pet] 启用 AI 链路探针（动作={action}，延时={delay}ms）");
+            diagnostics::spawn_llm_probe(app.clone(), action, delay);
+        }
+    }
+
     Ok(())
 }
 
@@ -350,6 +373,7 @@ fn spawn_poll_loop(app: AppHandle) {
     std::thread::spawn(move || {
         let mut last_display_check = Instant::now();
         let mut last_config_check = Instant::now();
+        let mut last_whisper_check = Instant::now();
         // 上一帧的左键状态：用来识别"按下的那一瞬间"（菜单的"点外面关掉"靠它）
         let mut prev_primary_down = false;
         while running.load(Ordering::Relaxed) {
@@ -405,6 +429,12 @@ fn spawn_poll_loop(app: AppHandle) {
                     }
                     Err(err) => eprintln!("[whale-pet] 读取显示器几何失败：{err}"),
                 }
+            }
+
+            // ---- 碎碎念（每秒问一次"到点了吗"，真正的请求丢给工作线程）----
+            if now.duration_since(last_whisper_check) >= Duration::from_millis(1000) {
+                last_whisper_check = now;
+                whisper::tick(&app);
             }
 
             // ---- 配置热重载 ----
