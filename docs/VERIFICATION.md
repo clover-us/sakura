@@ -2435,3 +2435,79 @@ release 是 GUI 子系统（没有 stderr），证据用**前端日志**（`pet-
 > 顺带一个真实数字：余额从第一次查的 **¥50.67** 变成 release 回归时的 **¥50.39**，
 > 少的 ¥0.28 正是前面那几次真实 LLM 调用（自检 + 对话 + 一轮压力）的花费——
 > 这也侧面说明余额接口读到的是真实账单。
+---
+
+# 17. 打包进素材：安装包自带资源包（2026-09-19）
+
+## 17.1 之前的问题
+
+v0.1.0 的安装包（NSIS 2.91 MB / MSI 4.13 MB）**不含素材**：106 条动画、27 张表情包、气泡字体
+都只躺在开发机的数据目录里（靠 `scripts\import-animations.ps1` 导入）。别人装了之后只有
+`include_bytes!` 编进二进制的那 2 条示例动画——"能跑起来，但只有两条动画"。
+
+## 17.2 做法：三条命令 + 首次运行释放
+
+```powershell
+pwsh -File scripts\import-animations.ps1 -Stage        # 上游素材 → 仓库 assets/（暂存，不入库）
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build              # 按 bundle.resources 打进安装包
+# 首次启动：src-tauri/src/assets_seed.rs 把随包素材"只补缺失"地释放到数据目录
+```
+
+- `tauri.conf.json` 的 `bundle.resources` 从 `[]` 改成四个目录的映射；
+- `assets_seed.rs`：**只补缺失**（同名文件已存在就跳过——用户改过的素材永不被覆盖）、
+  失败只记日志不拦启动、开发构建下资源目录里没素材就静默跳过；
+- `.gitignore` 忽略暂存素材（约 57 MB，可随时从上游重取），两条示例动画仍入库
+  （它们被 `include_bytes!` 编译进二进制）。
+
+## 17.3 实测：安装包体积与"全新安装"行为
+
+| 产物 | 之前 | 现在 |
+| --- | --- | --- |
+| NSIS `whale-pet_0.1.0_x64-setup.exe` | 2.91 MB | **62.08 MB** |
+| MSI | 4.13 MB（en-US） | **63.28 MB**（zh-CN，见 17.4） |
+
+**决定性验证**：把整个数据目录挪走（`com.whalepet.desktop` → `.full-backup`），
+用 release 二进制启动一次，全新数据目录里被铺出：
+
+```text
+webm/  106 个 / 51.86 MB
+memes/  27 个 /  4.63 MB
+pic/     8 个 /  0.25 MB
+fonts/   1 个 /  3.89 MB
+config.jsonc 15.2 KB（带全部注释的模板）
+```
+
+并且宠物真的用上了：`[pet-main-0] 动画: 首帧就绪 … 待机呼吸休闲.webm`，随后随机播到
+`吃重阳糕.webm`、`吃饺子.webm`（说明 106 条的池子生效，而不是只剩内置的 2 条）。
+验证完已把数据目录原样恢复（配置与 `llm-key.bin` 都在）。
+
+## 17.4 踩到的两个坑
+
+**① MSI 报 `LGHT0311`：代码页 1252 装不下中文素材文件名**
+
+```text
+main.wxs(122) : error LGHT0311 : A string was provided with characters that are not
+available in the specified database code page '1252'.
+```
+
+NSIS 用 Unicode（UTF-16），没这个问题；WiX/MSI 默认用 Windows-1252，遇到
+`待机呼吸休闲.webm`、`可爱.png` 这类文件名就炸。
+**修法**：`bundle.windows.wix.language = "zh-CN"`（对应代码页 936）。副作用是产物名从
+`…_en-US.msi` 变成 `…_zh-CN.msi`（顺带把过期的 en-US 旧产物删了，避免混淆）。
+
+**② 用 PowerShell 脚本改写 `import-animations.ps1` 时把 BOM 弄丢了**
+
+`[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($false)))` 会写出
+**无 BOM** 的 UTF-8，而 PowerShell 5.1 按 GBK 读它 → 脚本里的中文全乱码 → 解析报一堆
+"意外的标记"。这个坑项目里记过一次（`capture-window.ps1`），这次是同一个原因。
+**修法**：写回时用 `UTF8Encoding($true)` 保留 BOM；诊断手法是
+`[System.Management.Automation.Language.Parser]::ParseFile(...)` 直接列出解析错误位置。
+
+## 17.5 仍未做
+
+- **代码签名**（无证书）：安装时会有 SmartScreen「未知发布者」；
+- **安装流程本身的回归**：仍未在干净机器/虚拟机上实装（本机实装会覆盖开发环境）；
+  已做的替代验证是 17.3 的"挪走数据目录 + release 跑一遍"；
+- **CI 出包**：现在是手动三条命令；要自动化得加 GitHub Actions（runner 上能下载 NSIS/WiX）；
+- 62 MB 的安装包体积：素材是 VP9-alpha 视频，压缩率本就有限；若在意体积可考虑
+  「精简包（不带素材）+ 素材单独下载」两条产线。

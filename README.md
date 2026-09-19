@@ -107,24 +107,53 @@ pnpm tauri dev          # 开发模式（热更新；自动拉起 Vite）
 宠物默认出现在**屏幕右上角**。首次运行会自动在
 `%APPDATA%\com.whalepet.desktop\` 下生成配置与两条示例动画。
 
-### 2.3 构建可执行文件与安装包
+### 2.3 手动打包（生成安装文件，含素材）
+
+安装包**可以自带全部素材**（106 条动画 51.9 MB + 27 张表情包 4.6 MB + 气泡字体 3.9 MB），
+装完直接就能用，不需要再跑导入脚本。手动流程就是三条命令：
 
 ```powershell
-pnpm tauri build --no-bundle     # 只产 exe：src-tauri\target\release\whale-pet-desktop.exe
-pnpm tauri build                 # 连安装包一起出：bundle\nsis\*.exe 与 bundle\msi\*.msi
+# ① 把上游素材暂存进仓库 assets/（约 57 MB；素材不入库，见 .gitignore，克隆后要重新跑）
+pwsh -File scripts\import-animations.ps1 -Stage
+
+# ② 出包：exe + NSIS 安装器 + MSI（本机 CLI 不在 node_modules 里，走 D:\tools\Tauri）
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build
+#   只出某一种：--bundles nsis / --bundles msi；只出 exe：--no-bundle
+
+# ③ 产物
+#   src-tauri\target\release\whale-pet-desktop.exe            免安装可执行
+#   src-tauri\target\release\bundle\nsis\whale-pet_0.1.0_x64-setup.exe   62.1 MB（推荐）
+#   src-tauri\target\release\bundle\msi\whale-pet_0.1.0_x64_zh-CN.msi    63.3 MB
 ```
 
-> 本机（这台开发机）没有把 Tauri CLI 装进 `node_modules`（依赖刻意只留 vite + typescript），
-> CLI 走 `D:\tools\Tauri\nodejs\tauri.cmd`；直接用它也是一样的：
+**素材是怎么进安装包的**（`tauri.conf.json`）：
+
+```jsonc
+"bundle": {
+  "resources": {                      // 源（相对 src-tauri/）→ 资源目录里的目标路径
+    "../assets/webm":   "assets/webm",
+    "../assets/memes":  "assets/memes",
+    "../assets/pic":    "assets/pic",
+    "../assets/fonts":  "assets/fonts"
+  },
+  "windows": { "wix": { "language": "zh-CN" } }   // MSI 必须设：见下面的坑
+}
+```
+
+装好后**首次启动**由 `src-tauri/src/assets_seed.rs` 把随包素材**只补缺失地**释放到
+`%APPDATA%\com.whalepet.desktop\{webm,memes,pic,fonts}\`——数据目录仍是素材的唯一真相，
+用户往里放自己的动画、或删掉不想要的，都不会被覆盖或复生（同名文件已存在就跳过）。
+
+> **踩过的两个坑**（都已修，写在这里省下次一轮）：
+> 1. **MSI 报 `LGHT0311`：代码页 1252 装不下中文素材文件名**（`待机呼吸休闲.webm`、`可爱.png`…）。
+>    设 `bundle.windows.wix.language = "zh-CN"`（对应代码页 936）即可；NSIS 用 Unicode，本来就没这个问题。
+>    注意设了语言之后产物名会从 `…_en-US.msi` 变成 `…_zh-CN.msi`。
+> 2. **`import-animations.ps1` 必须保持 UTF-8 BOM**：这个脚本里有中文，PowerShell 5.1 对
+>    无 BOM 的 UTF-8 会按 GBK 读，整份脚本直接解析失败。用 PowerShell 改写它时记得
+>    `New-Object System.Text.UTF8Encoding($true)`。
 >
-> ```powershell
-> & 'D:\tools\Tauri\nodejs\tauri.cmd' build
-> ```
->
-> **安装包已于 v0.1.0 首次产出**（NSIS 2.91 MB / MSI 4.13 MB，本机实测），
-> 下载见 [Releases](https://github.com/clover-us/sakura/releases)。
-> 安装包**未做代码签名**，Windows 可能提示「未知发布者」。
-> NSIS 的安装向导图标由 `bundle.windows.nsis.installerIcon` 指定（否则会是 NSIS 默认图标）。
+> 另外：安装包**未做代码签名**，Windows 会提示「未知发布者」；NSIS 安装向导图标由
+> `bundle.windows.nsis.installerIcon` 指定（否则是 NSIS 默认图标）。
 
 ### 2.4 导入完整动画素材（106 条）
 

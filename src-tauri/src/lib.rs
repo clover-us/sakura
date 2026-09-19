@@ -19,6 +19,7 @@
 // 模块可见性：对二进制冒烟程序（src/bin/logic-smoke.rs）开放，
 // 因为本机的 GNU 工具链跑不起 `cargo test` 的 libtest 可执行文件（见该文件头部说明）。
 // 对外开放的仅是**纯逻辑**部分；命令/托盘等仍按内部实现使用。
+pub mod assets_seed;
 pub mod balance;
 pub mod bubble;
 pub mod chat_window;
@@ -191,10 +192,22 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = ensure_default_config(&app_data_dir)
         .map_err(|e| format!("准备默认配置失败：{e}"))?;
     // 释放内置示例动画（只在文件缺失时写）：保证"首次运行就能看到活的宠物"
-    match config::ensure_sample_animations(&app_data_dir) {
+match config::ensure_sample_animations(&app_data_dir) {
         Ok(0) => {}
         Ok(count) => eprintln!("[whale-pet] 已释放 {count} 条内置示例动画到 {}", app_data_dir.join("webm").display()),
         Err(err) => eprintln!("[whale-pet] 释放示例动画失败：{err}"),
+    }
+    // 随包素材（安装包里带的 webm/memes/pic/fonts）：**只补缺失**地释放到数据目录。
+    // 安装后第一次启动就把 100+ 条动画与表情包铺好，用户不必再跑 import 脚本；
+    // 数据目录里已有素材时（老用户/开发机）这里全走"已存在"分支，等于一次 stat 检查。
+    match app.path().resource_dir() {
+        Ok(resource_dir) => {
+            let report = assets_seed::seed(&resource_dir, &app_data_dir);
+            if report.copied > 0 || report.source.is_some() {
+                eprintln!("[whale-pet] {}", report.summary());
+            }
+        }
+        Err(err) => eprintln!("[whale-pet] 解析资源目录失败（跳过随包素材）：{err}"),
     }
     let config = load_config(&config_path).map_err(|e| {
         // 配置出错是最常见的用户故障：把"文件在哪"和"怎么改"一起打出来，省一轮排查

@@ -21,7 +21,11 @@
 [CmdletBinding()]
 param(
     [string]$SourceRepo = 'D:\programs\github\whale-pet',
-    [switch]$All
+    [switch]$All,
+    # 把上游素材**复制进仓库的 assets/ 目录**：`tauri build` 要按 tauri.conf.json 的
+    # `bundle.resources` 把它们打进安装包（这一步只影响仓库，不动应用数据目录）。
+    # 打包前跑一次即可；素材不入库（见 .gitignore），所以克隆仓库后要重新跑。
+    [switch]$Stage
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +65,37 @@ foreach ($file in $files) {
 
 $totalMb = [math]::Round((Get-ChildItem $TargetWebm -File | Measure-Object Length -Sum).Sum / 1MB, 1)
 Write-Host "[导入] 完成：新拷 $copied 个，跳过 $skipped 个；素材目录现有 $($files.Count) 条 / $totalMb MB" -ForegroundColor Green
+
+if ($Stage) {
+    # 打进安装包的素材：webm（动画）+ memes（表情包）+ pic + fonts（气泡字体）
+    #
+    # 为什么要有这一步：安装包只能打**仓库里存在**的文件，而上游素材默认不入库
+    # （几十 MB，且可随时从上游重新取）。所以"出带素材的包"的顺序是：
+    #   -Stage 把素材放进 assets/ → tauri build（bundle.resources 会把它们打进安装包）
+    #   → 首次运行时由 src-tauri/src/assets_seed.rs 释放到应用数据目录。
+    $stagePairs = @(
+        @{ Src = 'dsh-pet\assets\webm'; Dst = 'assets\webm' },
+        @{ Src = 'dsh-pet\assets\memes'; Dst = 'assets\memes' },
+        @{ Src = 'dsh-pet\assets\pic'; Dst = 'assets\pic' },
+        @{ Src = 'dsh-pet\assets\fonts'; Dst = 'assets\fonts' }
+    )
+    foreach ($pair in $stagePairs) {
+        $source = Join-Path $SourceRepo $pair.Src
+        if (-not (Test-Path $source)) { continue }
+        $dest = Join-Path (Split-Path $PSScriptRoot -Parent) $pair.Dst
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        $files = Get-ChildItem $source -File
+        $copied = 0
+        foreach ($file in $files) {
+            $target = Join-Path $dest $file.Name
+            if ((Test-Path $target) -and ((Get-Item $target).Length -eq $file.Length)) { continue }
+            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+            $copied++
+        }
+        $total = [math]::Round((Get-ChildItem $dest -File | Measure-Object Length -Sum).Sum / 1MB, 1)
+        Write-Host "[打包素材] $($pair.Dst)：新拷 $copied 个，现有 $((Get-ChildItem $dest -File).Count) 个 / $total MB" -ForegroundColor Green
+    }
+}
 
 if ($All) {
     # 表情包 / 通知图标 / 气泡字体：气泡与碎碎念功能会用到

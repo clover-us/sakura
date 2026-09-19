@@ -17,3 +17,13 @@ Desktop.ini
 
 # 诊断/临时产物（运行期生成在应用数据目录，这里只兜底工作目录里的意外产物）
 *.log
+
+# 打包素材的暂存目录（由 scripts/import-animations.ps1 -Stage 从上游复制）
+# 为什么不入库：webm/memes/fonts 共约 57 MB，随时可从上游重新取；出带素材的安装包前跑一次 -Stage 即可。
+# 例外：assets/webm 里那两条示例动画被 include_bytes! 编译进二进制（assets/webm/*.webm），必须入库。
+assets/memes/
+assets/pic/
+assets/fonts/
+assets/webm/*.webm
+!assets/webm/待机呼吸休闲.webm
+!assets/webm/点击回应-元气挥手.webm
