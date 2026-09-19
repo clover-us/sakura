@@ -1,0 +1,29 @@
+# 界面截图（供视觉验收）
+
+这些图不是"设计稿"，而是**真实运行的窗口截图**，由
+[`scripts/capture-window.ps1`](../../scripts/capture-window.ps1) 抓取：
+
+```powershell
+pnpm tauri dev                                    # 另一个终端
+$env:WHALE_PET_DIAG_SETTINGS = '1'                # 或 nav:physics / nav:animations / nav:system / ownbehaviour
+$env:WHALE_PET_DIAG_TRAY_MENU = '6000:picker'     # 托盘菜单（:picker 展开动作点播）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -TitleLike '设置'
+```
+
+> 走的是**屏幕合成截图**：WebView2 的内容用 `PrintWindow` 抓不到（返回全黑，DirectComposition 的已知行为）。
+> 抓之前脚本会把目标窗口提到前台，因此**图里如果看到桌宠压在上面，那是真的被它压着**
+> （宠物窗是 `always_on_top`）。
+
+| 图 | 内容 |
+| --- | --- |
+| `settings-pet.png` | 设置窗口 · 宠物页：左侧导航、基本信息、行为（跟随全局 / 单独设置）、移除 |
+| `settings-physics.png` | 设置窗口 · 物理参数：四个数值 + 两个勾选行（这里的勾选行曾是"被挤成竖排文字"的 bug） |
+| `settings-animations.png` | 设置窗口 · 动画池默认值：待机/转向/拖拽/点击回应池 + 移动池 + 分类 + 权重 |
+| `settings-system.png` | 设置窗口 · 启动与系统：开机自启、文件与位置、运行方式 |
+| `tray-menu.png` | 托盘菜单（浅色）：鲸鱼 logo、显示/隐藏切换项、回到初始位置、动作点播、设置、退出 |
+| `tray-menu-picker.png` | 托盘菜单 · 动作点播展开：按分类分组的可滚动列表（窗口自动变高） |
+| `tray-menu-two-pets.png` | 托盘菜单 · 动作点播（两只宠物）：顶部宠物切换 chips |
+| `icon-candidates.png` | 图标三套配色对比（256px 放大 + 64/32/16 真实像素）；当前用的是第一套 `rose` |
+
+界面风格参考了用户提供的截图：**浅色底 + 左侧竖向导航 + 单一粉色强调色 + 细边框 + 大留白**；
+深色那一套是通过 `prefers-color-scheme` 切换的同一份结构（本机桌面为浅色，深色未被真机渲染验证过）。
