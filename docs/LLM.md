@@ -53,6 +53,9 @@
 
 - OpenAI 兼容：`POST {baseUrl}/chat/completions`，body `{ model, messages, temperature, stream:false }`；
 - 客户端用 **`ureq` + `native-tls`**（只要"发一个 JSON、读一个 JSON"；`reqwest` 会带进 hyper/tower 一整套）。
+  ⚠️ **必须显式 `TlsProvider::NativeTls`**：ureq 3 默认 provider 是 Rustls，feature 只是"可用"而不改默认；
+  不写这一句，https 请求会在传输层 **panic**（release 下 `panic=abort` → 整个应用崩）。
+  这条是第一次真实调用 DeepSeek 时炸出来的（见 `VERIFICATION.md` 13.11），冒烟里有对应守卫。
   将来要做打字机流式再评估换实现 —— 届时只改 `llm.rs` 一处；
 - **在 Rust 侧发请求**，所以页面 CSP 的 `connect-src` 不需要放行任何外部域名（少一个安全口子）；
 - 超时：碎碎念 30s、对话 60s（与上游一致）；失败**不重试**（对话）以免重复计费；

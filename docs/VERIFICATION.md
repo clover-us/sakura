@@ -2067,3 +2067,60 @@ mock 侧：POST /chat/completions（碎碎念 prompt）+ POST /chat/completions�
 | ⑥ 本地 mock 端到端 + `VERIFICATION` 记录 + release 回归 | ✅ 本节与 13.2~13.9 |
 
 **未做（M3 后续）**：表情包配图、余额查询、真实 provider 的联调（需要用户提供 Key 或本机 Ollama）。
+## 13.11 真实 provider 联调（DeepSeek）：抓到一个 mock 验不出的致命坑
+
+用户提供了 DeepSeek key，于是做了**两次**真实调用（刻意只花两次请求：定时碎碎念关掉、
+不跑循环；两次都是最小提示词）。
+
+### 抓到的问题：https 传输层会 panic（release 下等于崩溃）
+
+第一次真实请求直接炸在 ureq 内部：
+
+```text
+thread '<unnamed>' panicked at ureq-3.4.2/src/unversioned/transport/mod.rs:485:17:
+uri scheme is https, provider is Rustls but feature is not enabled: rustls
+```
+
+原因：**ureq 3 默认的 TLS provider 是 Rustls**，而我们只开了 `native-tls` feature
+（Windows 走 schannel，不需要 C 工具链）。feature 只是"可用"，**不会**自动切换默认 provider。
+后果比"请求失败"严重得多：release 是 `panic = "abort"`，这条 panic 会**把整个应用带走**。
+
+**关键教训**：本地 mock 是 `http://`，所以 mock 端到端**永远测不出**这一类传输层问题。
+"能不花真钱就验完所有链路"这句话有边界——**https/TLS 这一段必须真跑一次**。
+
+### 修复
+
+`llm.rs` 里显式指定 provider（并写明为什么）：
+
+```rust
+let tls = ureq::tls::TlsConfig::builder()
+    .provider(ureq::tls::TlsProvider::NativeTls)
+    .build();
+let agent: ureq::Agent = ureq::Agent::config_builder()
+    .timeout_global(Some(Duration::from_secs(self.config.timeout_sec)))
+    .tls_config(tls)
+    .build()
+    .into();
+```
+
+**回归守卫**（冒烟新增第 89 项）：对着一个必定连不上的 https 端口发一次请求，
+要求"返回结构化失败且**不 panic**"——真 panic 会把冒烟进程直接带走，等于测试失败。
+旧的代码在这一项上必然炸，所以它能挡住回归。
+
+### 修复后的两次真实调用（DeepSeek `deepseek-chat`）
+
+| 调用 | 结果 |
+| --- | --- |
+| 自检（碎碎念提示词） | `自检成功：好像该换水了，咕噜咕噜~` |
+| 对话（"你叫什么名字？"） | `对话: 已回复（488ms）：我是小鲸鱼呀，嘿嘿～`，同时 `[pet-main-0] 碎碎念: 我是小鲸鱼呀，嘿嘿～`（**走气泡**），`memory.json` 落下一轮 user/assistant |
+
+两点值得注意（都说明配置生效了）：
+- 回复是**中文、短句、符合人设**（内置人设要求 20 字以内、不提 AI）；
+- 问"你叫什么名字"时它答"我是小鲸鱼"——来自 system prompt 里的
+  `你的名字是“小鲸鱼”。`（说明名字声明这条链路真的被模型读到了）。
+
+### 收尾状态
+
+- **AI 保持关闭**（配置已还原成用户原来的样子），所以**没有待机消耗**；
+- API key 仍在 DPAPI 加密库里（`llm-key.bin`），日志里只有打码形态；
+- 要启用：设置 → AI → 勾总开关与碎碎念/对话 → provider 已是 DeepSeek（地址与模型留空即用预置）。

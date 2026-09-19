@@ -417,6 +417,28 @@ pub fn spawn_llm_probe(app: tauri::AppHandle, action: String, delay_ms: u64) {
 
         let want = |what: &str| action == "all" || action == what;
 
+        // `savekey`：把 `WHALE_PET_DIAG_LLM_KEY` 里的 key 写进加密库。
+        // 为什么用环境变量而不是参数：命令行参数在进程列表里可见；
+        // 而且这样 key 只经过一次内存拷贝就进了 DPAPI，不会落在任何文件里。
+        // **日志只打码**（`secret::mask`），这一条是硬纪律。
+        if action == "savekey" {
+            match std::env::var("WHALE_PET_DIAG_LLM_KEY") {
+                Ok(key) if !key.trim().is_empty() => {
+                    let store = crate::secret::SecretStore::new(&app_data_dir);
+                    match store.save(&key) {
+                        Ok(()) => eprintln!(
+                            "[whale-pet][LLM 探针] 密钥已写入 {}（{}）",
+                            store.path().display(),
+                            crate::secret::mask(&key)
+                        ),
+                        Err(err) => eprintln!("[whale-pet][LLM 探针] 保存密钥失败：{err}"),
+                    }
+                }
+                _ => eprintln!("[whale-pet][LLM 探针] 没有提供 WHALE_PET_DIAG_LLM_KEY"),
+            }
+            return;
+        }
+
         if want("status") {
             let store = crate::secret::SecretStore::new(&app_data_dir);
             let key = store.load().ok().flatten();

@@ -342,9 +342,14 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // ---- 7e. AI 链路探针（`WHALE_PET_DIAG_LLM=status|selftest|whisper|chat|all[:延时ms]`）----
     if let Ok(value) = std::env::var("WHALE_PET_DIAG_LLM") {
         if !value.trim().is_empty() {
+            // `savekey` 不需要延时（它只是写一次密钥库）
             let (action, delay) = match value.split_once(':') {
                 Some((action, delay)) => (action.to_string(), delay.parse::<u64>().unwrap_or(3000)),
-                None => (value.clone(), 3000),
+                None => {
+                    let action = value.clone();
+                    let delay = if action == "savekey" { 800 } else { 3000 };
+                    (action, delay)
+                }
             };
             eprintln!("[whale-pet] 启用 AI 链路探针（动作={action}，延时={delay}ms）");
             diagnostics::spawn_llm_probe(app.clone(), action, delay);

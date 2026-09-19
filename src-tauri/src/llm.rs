@@ -163,8 +163,18 @@ impl<'a> Client<'a> {
         let url = format!("{base}/chat/completions");
         let body = self.request_body(messages)?;
 
+        // ⚠️ **必须显式指定 TLS provider**（真机联调才暴露的坑）：
+        // ureq 3 默认用 Rustls，而我们只开了 `native-tls` feature（Windows 上走 schannel，
+        // 不需要 C 工具链）。若不明说，https 请求会在传输层**直接 panic**：
+        //   `uri scheme is https, provider is Rustls but feature is not enabled: rustls`
+        // 这在 release 下是致命的（`panic = "abort"`：整个应用会被带走）。
+        // 本地 mock 是 http，所以 mock 端到端**永远测不出**这一条——这就是真跑一次的意义。
+        let tls = ureq::tls::TlsConfig::builder()
+            .provider(ureq::tls::TlsProvider::NativeTls)
+            .build();
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(self.config.timeout_sec)))
+            .tls_config(tls)
             .build()
             .into();
 

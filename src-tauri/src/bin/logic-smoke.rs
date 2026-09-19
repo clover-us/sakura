@@ -561,6 +561,27 @@ fn main() {
         );
         let _ = std::fs::remove_dir_all(&dir);
 
+        // ---- 12g. https 传输层不能 panic（真机联调抓到的坑，必须有回归守卫）----
+        //
+        // 背景：ureq 3 默认 TLS provider 是 Rustls，而我们只开 `native-tls` feature；
+        // 若不显式 `TlsProvider::NativeTls`，**https 请求会在传输层直接 panic**
+        // （`uri scheme is https, provider is Rustls but feature is not enabled`），
+        // release 下 `panic = "abort"` → 整个应用被带走。
+        // 这里连一个**必定连不上**的 https 端口（本机 discard 端口），要求：
+        //   - 返回结构化失败（Offline / Timeout 之一）
+        //   - **绝不 panic**（真 panic 会把这个冒烟进程直接带走，等于测试失败）
+        let mut https_cfg = base_llm("custom", "https://127.0.0.1:9");
+        https_cfg.model = "smoke".to_string();
+        https_cfg.enabled = true;
+        https_cfg.timeout_sec = 5;
+        let https_client = Client::new(&https_cfg, Some("sk-smoke"));
+        let https_result = https_client.complete(&[ChatMessage::user("ping")]);
+        check(
+            "https 连不上时返回结构化失败而非 panic",
+            matches!(https_result, Err(Failure::Offline) | Err(Failure::Timeout) | Err(Failure::Http(_))),
+            &format!("{https_result:?}"),
+        );
+
         // ---- 12f. 记忆：全量保存 + 只取最近 N 轮 + 损坏自愈 ----
         use whale_pet_desktop_lib::memory::MemoryStore;
         let dir = std::env::temp_dir().join("whale-pet-smoke-memory");

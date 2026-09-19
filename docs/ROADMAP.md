@@ -111,6 +111,8 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
       —— 输入窗是本项目唯一的**可聚焦**辅助窗（要打字），托盘与右键菜单各有一个入口
 - [ ] **表情包配图**：碎碎念随机抽 / 对话按语境选（需要把 `assets/memes` 一并导入）
 - [ ] **余额**：DeepSeek + OpenCode + 自定义接口（上游 `host/balance.ts` 的 provider 表可复用）
+- [x] **真实 provider 联调**：DeepSeek `deepseek-chat` 下自检与对话各一次真跑通过；
+      并因此修掉一个 mock 验不出的致命坑（https 传输层 panic，见 `VERIFICATION.md` 13.11）
 
 **出口标准**：默认关闭所有联网功能（保持"零成本桌宠"），开启后可用。
 
