@@ -23,7 +23,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 | `tray-menu.png` | 托盘菜单（浅色）：鲸鱼 logo、显示/隐藏切换项、回到初始位置、动作点播、设置、退出 |
 | `tray-menu-picker.png` | 托盘菜单 · 动作点播：**分类默认全部收起**，右侧显示每个分类的条数 |
 | `tray-menu-picker-expanded.png` | 托盘菜单 · 点开「待机」之后：只展开被点的分类，窗口自动变高 |
-| `icon-candidates.png` | 图标六套候选（256px 放大 + 64/32/16 真实像素）。前两款是鲸鱼（贴合当前素材），后四款**不指向物种**；当前默认用的是 `d-pet-peek`（长耳朵的小生物趴在任务栏上） |
+| `icon-candidates.png` | 图标候选（256px 放大 + 64/32/16 真实像素）。前两款是鲸鱼（贴合当前素材），其余**不指向物种**；**用户选定并已采用第 4 款 `d-pet-peek`**（小生物趴在任务栏上），图里它那一列下方有粉色标记线 |
 
 界面风格参考了用户提供的截图：**浅色底 + 左侧竖向导航 + 单一粉色强调色 + 细边框 + 大留白**；
 深色那一套是通过 `prefers-color-scheme` 切换的同一份结构（本机桌面为浅色，深色未被真机渲染验证过）。
