@@ -28,6 +28,7 @@ pub mod menu_window;
 pub mod model;
 pub mod pet_protocol;
 pub mod reload;
+pub mod secret;
 pub mod settings_window;
 pub mod state;
 pub mod tray;

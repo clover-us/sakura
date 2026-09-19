@@ -98,9 +98,13 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
 
 ## M3 加分能力（需要自带 LLM）
 
-- [ ] **LLM 适配层**：OpenAI 兼容 / DeepSeek / Ollama；API key 用 DPAPI（`keyring` crate）加密存
-- [ ] **碎碎念**：按周期生成一句话 + 气泡（上游 `whisper.ts` 的 prompt 语义可复用）
-- [ ] **对话与记忆**：`memory.json` 全存不删 + 最近 N 轮进上下文（上游 `chat.ts` 同构）
+> 设计说明见 [`LLM.md`](LLM.md)（与上游的对应关系、配置段、密钥存储、请求形状、记忆结构、
+> 交互形态、验证策略）。上游那套 prompt 语义与失败处理已逐字侦察并记录，实现时照抄。
+
+- [ ] **LLM 适配层**：OpenAI 兼容 / DeepSeek / Ollama / 自定义；Key 用 **DPAPI** 加密存
+      （`llm-key.bin`，不引 keyring）；HTTP 用 `ureq + native-tls`；在 **Rust 侧**发请求（CSP 不放行外部域名）
+- [ ] **碎碎念**：按周期（默认 300s）生成一句 → 气泡显示 10s（复用上游 prompt 语义与人设默认值）
+- [ ] **对话**：宠物角上的单行输入弹窗 + `memory.json` 全量记忆（最近 N 轮进上下文）+ 回复走气泡
 - [ ] **表情包配图**：碎碎念随机抽 / 对话按语境选（需要把 `assets/memes` 一并导入）
 - [ ] **余额**：DeepSeek + OpenCode + 自定义接口（上游 `host/balance.ts` 的 provider 表可复用）
 

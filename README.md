@@ -374,7 +374,7 @@ M2 / M2.5 探针的证据见第 9 / 10 节。
 | 托盘图标的真实点击未被自动化 | 本机鼠标注入不可靠，验证覆盖到"菜单项 → 动作"这一层为止 | 见 `VERIFICATION.md` 9.9 |
 | 无跨窗碰撞 | 多宠物可开（设置窗口可增删），但宠物之间不碰撞（`petCollision` 目前是占位开关） | M1 遗留项，见 ROADMAP |
 | 无点击积分 | 飞行中被按下的粒子与积分卡未做 | M1 遗留项 |
-| 无 LLM 能力 | 碎碎念/对话属 M3 | 需要自带 provider（OpenAI 兼容/DeepSeek/Ollama） |
+| 无 LLM 能力（M3 进行中） | 碎碎念/对话的**设计已定稿**（[`docs/LLM.md`](docs/LLM.md)）：默认完全离线、Key 用 DPAPI 加密存、Rust 侧发请求 | 正在实现：适配层 → 碎碎念 → 对话 |
 | 从 dsh-pet 一键导入未做 | 素材导入已有 `scripts/import-animations.ps1`，设置窗口里的一键入口未做 | M2 遗留项 |
 
 ---
