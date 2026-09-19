@@ -796,7 +796,7 @@ function renderNav(): void {
 
   nav.appendChild(el('div', 'nav-group', '宠物'));
   config.pets.forEach((pet, index) => {
-    const item = el('button', 'nav-item sub');
+    const item = el('button', 'nav-item');
     item.type = 'button';
     // 稳定的 id：排障探针要能"切到某一页"截图（见 src-tauri/src/diagnostics.rs）
     item.id = `nav-pet-${index}`;
@@ -817,7 +817,7 @@ function renderNav(): void {
     });
     nav.appendChild(item);
   });
-  const add = el('button', 'nav-item sub');
+  const add = el('button', 'nav-item');
   add.type = 'button';
   // 稳定 id：排障探针要能"加一只宠物再保存"（见 src-tauri/src/diagnostics.rs）
   add.id = 'btn-add-pet';

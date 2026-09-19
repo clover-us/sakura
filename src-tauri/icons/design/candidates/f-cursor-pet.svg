@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    方案 F「光标 + 小生物」：表达"用鼠标跟桌面上的小家伙互动"——
+    一个小团子宠物 + 鼠标指针，同样不指向具体物种。
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B3A8FF"/>
+      <stop offset="1" stop-color="#7A6BEE"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.18" r="0.85">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="skin" x1="0.1" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E9E5FF"/>
+    </linearGradient>
+    <filter id="pop" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#241C63" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#glow)"/>
+
+  <g filter="url(#pop)">
+    <!-- 小团子宠物：矮胖身子 + 两只小耳朵 + 一点小尾巴 -->
+    <path d="M296 470c22-74 66-88 88-46l28 56Z" fill="url(#skin)"/>
+    <path d="M528 470c-22-74-66-88-88-46l-28 56Z" fill="url(#skin)"/>
+    <path d="M412 330c142 0 214 96 214 186 0 96-88 150-214 150S198 612 198 516c0-90 72-186 214-186Z" fill="url(#skin)"/>
+    <path d="M628 560c46-16 78 6 74 44-4 34-40 52-78 40Z" fill="url(#skin)"/>
+    <ellipse cx="412" cy="568" rx="156" ry="62" fill="#FFFFFF" opacity="0.5"/>
+    <ellipse cx="348" cy="500" rx="30" ry="34" fill="#2A2350"/>
+    <ellipse cx="478" cy="500" rx="30" ry="34" fill="#2A2350"/>
+    <circle cx="338" cy="487" r="11" fill="#FFFFFF"/>
+    <circle cx="468" cy="487" r="11" fill="#FFFFFF"/>
+    <ellipse cx="288" cy="566" rx="36" ry="22" fill="#FF9EC0" opacity="0.9"/>
+    <ellipse cx="538" cy="566" rx="36" ry="22" fill="#FF9EC0" opacity="0.9"/>
+    <path d="M384 570c12 20 44 20 56 0" fill="none" stroke="#2A2350" stroke-width="15" stroke-linecap="round"/>
+
+    <!-- 鼠标指针：明确指向这只小宠物 -->
+    <path d="M700 470l248 116-106 32-40 104-102-252Z" fill="#FFFFFF" stroke="#241C63" stroke-width="20" stroke-linejoin="round"/>
+  </g>
+</svg>

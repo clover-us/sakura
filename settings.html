@@ -124,7 +124,9 @@
         border-radius: 8px;
       }
       .nav-group {
-        padding: 12px 8px 4px;
+        /* 左内边距与 `.nav-item` 一致：分组标题和下面的图标**同一条竖线**，
+           不然只是 2px 的差别也会显得"没对齐"（用户一眼就看出来了） */
+        padding: 12px 8px 4px 10px;
         font-size: 11px;
         letter-spacing: 0.6px;
         color: var(--muted);
@@ -180,15 +182,15 @@
       .nav-item[data-active='true'] .ic {
         color: var(--accent);
       }
+      /* 说明：**没有** `.nav-item.sub` 这一层缩进了。
+         宠物项与通用项现在共用同一套左内边距，图标与文字落在同一条竖线上
+         （原来宠物项多缩进 12px，用户指出"两块的水平位置不一致"）。 */
       .nav-item .dot {
         width: 6px;
         height: 6px;
         border-radius: 50%;
         background: var(--accent);
         flex: none;
-      }
-      .nav-item.sub {
-        padding-left: 22px;
       }
       .sidebar-foot {
         padding: 10px 14px;
