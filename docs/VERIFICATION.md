@@ -1809,7 +1809,27 @@ PrivateExtractIconsW(exe, 0, 256, 256) → 1 个资源
 顺手把分组标题（"宠物"/"通用"）的左内边距从 8px 调成 10px，与下面条目的左边对齐
 （差 2px 也会显得"没对齐"）。截图见 [`screenshots/settings-pet.png`](screenshots/README.md)。
 
-## 11.5 顺带修掉的两个验证工具问题
+## 11.6 漏改的两处 logo（用户："这两处的图标都没改"）
+
+用户截图圈出**设置侧栏顶部的品牌 logo** 与**托盘菜单头部的 logo**——它们还是旧的粉色小鲸鱼。
+原因很直白：应用图标换了，但这两处 logo 不在图标文件里，而是**手写在页面里的内联 SVG**
+（`settings-page.ts` / `tray-menu-page.ts` 的 `PET_LOGO` 常量 + 两处 CSS 渐变底色），换图标时漏了。
+
+现在三处 logo 全部改成与 `design/app-icon.svg` 同一造型（青绿底 + 趴在横条上的小生物 + 腮红/微笑）：
+
+| 位置 | 实现 | 证据 |
+| --- | --- | --- |
+| 设置窗口侧栏品牌 logo | `settings.html` 的 `.brand .logo` 底色 + `settings-page.ts::PET_LOGO` | [`screenshots/settings-pet.png`](screenshots/README.md) |
+| 设置窗口「关于」页的大 logo | 同一个 `PET_LOGO` + 内联底色 | 同上（同一份常量） |
+| 托盘菜单头部 logo | `tray-menu.html` 的 `.logo` 底色 + `tray-menu-page.ts::PET_LOGO` | [`screenshots/tray-menu.png`](screenshots/README.md) |
+
+> **下次换图标要一起改的地方**（这一条是被用户抓出来的，写下来避免再漏）：
+> ① `icons/design/app-icon.svg`（图标源）→ ② `cargo run --example make-icon` 生成产物
+> → ③ 把 `tauri.conf.json` 碰一下（否则 exe 图标不更新）→ ④ 两个页面里的内联 `PET_LOGO`
+> 与它们的 CSS 渐变底色。已用 `Select-String` 全仓搜过旧图标特征（`24.4` / `f8749f` / `ffc2db` / `25304C`），
+> 确认没有残留。
+
+## 11.7 顺带修掉的两个验证工具问题
 
 | 问题 | 处理 |
 | --- | --- |

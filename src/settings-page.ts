@@ -168,17 +168,30 @@ function icon(name: string, size = 15): string {
   return `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] ?? ''}</svg>`;
 }
 
-/** 与 `icons/design/app-icon.svg` 同一造型的简化鲸鱼（内联 SVG，避免引外部图片） */
-const WHALE_LOGO = `
+/**
+ * 应用图标的小尺寸内联版（与 `icons/design/app-icon.svg` 同一造型：青绿圆角底 +
+ * 趴在横条上的小生物）。
+ *
+ * 为什么不直接引用那个 SVG 文件：应用图标是"一份矢量源 + 预生成产物"，
+ * 而页面只需要一个 22px 的小标记；内联一份简化版最省事，也不必让 webview 去请求图标文件。
+ * **但它必须跟着图标一起改**——早先这里留的是旧版粉色小鲸鱼，用户截图圈出来说"这两处都没改"。
+ */
+const PET_LOGO = `
 <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-  <ellipse cx="24.4" cy="13.4" rx="6" ry="2.6" fill="#fff" transform="rotate(-18 24.4 13.4)"/>
-  <ellipse cx="25" cy="18.6" rx="6" ry="2.6" fill="#fff" transform="rotate(18 25 18.6)"/>
-  <path d="M14 5.6c6.1 0 9.7 4 9.7 8.4 0 4.7-4.3 7.4-9.7 7.4S4.3 18.7 4.3 14C4.3 9.6 7.9 5.6 14 5.6Z" fill="#fff"/>
-  <ellipse cx="10.9" cy="14.4" rx="1.6" ry="1.8" fill="#25304C"/>
-  <ellipse cx="17.1" cy="14.4" rx="1.6" ry="1.8" fill="#25304C"/>
-  <ellipse cx="7.4" cy="18.6" rx="2" ry="1.2" fill="#FF9EC0"/>
-  <ellipse cx="20.6" cy="18.6" rx="2" ry="1.2" fill="#FF9EC0"/>
-  <path d="M12.4 19c.9 1.4 4 1.4 4.9 0" fill="none" stroke="#25304C" stroke-width="1.2" stroke-linecap="round"/>
+  <rect x="4.4" y="21" width="23.2" height="6" rx="3" fill="#fff" opacity="0.96"/>
+  <circle cx="8.6" cy="24" r="1.1" fill="#9BE0D8"/>
+  <circle cx="12.2" cy="24" r="1.1" fill="#FFD9A8"/>
+  <circle cx="15.8" cy="24" r="1.1" fill="#BBD7FF"/>
+  <path d="M11.4 11.6c.8-3 2.6-3.8 3.6-1.8l1 2.1Z" fill="#fff"/>
+  <path d="M20.6 11.6c-.8-3-2.6-3.8-3.6-1.8l-1 2.1Z" fill="#fff"/>
+  <ellipse cx="10.6" cy="19.4" rx="2.7" ry="1.6" fill="#fff" transform="rotate(-14 10.6 19.4)"/>
+  <ellipse cx="21.4" cy="19.4" rx="2.7" ry="1.6" fill="#fff" transform="rotate(14 21.4 19.4)"/>
+  <path d="M16 8.4c5 0 7.8 3.4 7.8 6.5 0 3.3-3.4 5-7.8 5s-7.8-1.7-7.8-5c0-3.1 2.8-6.5 7.8-6.5Z" fill="#fff"/>
+  <ellipse cx="13.7" cy="14.3" rx="1.15" ry="1.3" fill="#22384A"/>
+  <ellipse cx="18.3" cy="14.3" rx="1.15" ry="1.3" fill="#22384A"/>
+  <ellipse cx="11.4" cy="17.2" rx="1.4" ry="0.85" fill="#FF9EC0"/>
+  <ellipse cx="20.6" cy="17.2" rx="1.4" ry="0.85" fill="#FF9EC0"/>
+  <path d="M14.8 17.3c.5.9 2 .9 2.5 0" fill="none" stroke="#22384A" stroke-width="0.9" stroke-linecap="round"/>
 </svg>`;
 
 // ============================================================================
@@ -755,10 +768,10 @@ function renderAboutPage(): HTMLElement {
   logo.style.width = '56px';
   logo.style.height = '56px';
   logo.style.borderRadius = '16px';
-  logo.style.background = 'linear-gradient(160deg, #ffc2db, #f8749f)';
+  logo.style.background = 'linear-gradient(160deg, #8FE6DC, #39A9C9)';
   logo.style.display = 'grid';
   logo.style.placeItems = 'center';
-  logo.innerHTML = WHALE_LOGO;
+  logo.innerHTML = PET_LOGO;
   logoRow.appendChild(logo);
   const meta = el('div');
   meta.style.marginLeft = '14px';
@@ -996,7 +1009,7 @@ async function save(): Promise<void> {
 
 function bind(): void {
   setLogLabel('settings');
-  byId('brand-logo').innerHTML = WHALE_LOGO;
+  byId('brand-logo').innerHTML = PET_LOGO;
   // 顶部与底部的按钮是静态 HTML：这里补上图标（用同一套 Lucide 形状）
   byId('btn-open-file').innerHTML = `${icon('folder-open', 14)}<span>打开配置文件</span>`;
   byId('btn-reload').innerHTML = `${icon('rotate-ccw', 14)}<span>放弃改动</span>`;
