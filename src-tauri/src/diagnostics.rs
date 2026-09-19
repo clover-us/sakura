@@ -300,24 +300,27 @@ pub fn spawn_tray_probe(app: tauri::AppHandle, items: Vec<String>) {
     });
 }
 
-/// 排障：`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker]` —— 启动后按固定延时**弹出托盘菜单**。
+/// 排障：`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker|:picker-expanded]` —— 启动后按固定延时**弹出托盘菜单**。
 ///
 /// 用途：托盘菜单的样式只能看（`scripts/capture-window.ps1` 会按标题截图），
 /// 而"点托盘图标"在自动化环境里注不进去（见 `spawn_tray_probe` 的说明）。
 /// 本探针走的是**与托盘点击完全相同的 `tray_menu::show()`**，
 /// 因此截到的就是真实弹出效果（只是锚点取的是当时的鼠标位置）。
 ///
-/// 带 `:picker` 时再点一下页面里的「动作点播」，把展开态也截下来
-/// （展开会让窗口变高，这条路径单独验一次）。
-pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, open_picker: bool) {
+///   - `:picker`          再点一下「动作点播」（验证展开后的分类折叠态）
+///   - `:picker-expanded` 再展开第一个分类（验证点击展开与窗口变高）
+pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, mode: &'static str) {
     std::thread::spawn(move || {
+        // 探针模式下不让"外点关闭"把菜单收掉：本机桌面环境时不时会有零星鼠标按下，
+        // 那一下会让截图变成"窗口不存在"（实测撞过两次）
+        crate::tray_menu::keep_open_for_probe();
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-        eprintln!("[whale-pet][托盘菜单探针] 弹出托盘菜单（展开动作点播={open_picker}）");
+        eprintln!("[whale-pet][托盘菜单探针] 弹出托盘菜单（模式={mode}）");
         if let Err(err) = crate::tray_menu::show(&app) {
             eprintln!("[whale-pet][托盘菜单探针] 弹出失败：{err}");
             return;
         }
-        if !open_picker {
+        if mode.is_empty() {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(1200));
@@ -325,15 +328,29 @@ pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, open_picker: 
             eprintln!("[whale-pet][托盘菜单探针] 找不到托盘菜单窗");
             return;
         };
-        let script = r#"(function () {
+        let picker_script = r#"(function () {
   var node = document.querySelector('[data-act="picker"]');
   if (!node) return 'no-item';
   node.click();
   return 'clicked';
 })()"#;
-        match window.eval(script) {
+        match window.eval(picker_script) {
             Ok(()) => eprintln!("[whale-pet][托盘菜单探针] 已点击「动作点播」"),
             Err(err) => eprintln!("[whale-pet][托盘菜单探针] 注入点击失败：{err}"),
+        }
+        if mode != "picker-expanded" {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        let expand_script = r#"(function () {
+  var node = document.querySelector('.group-head');
+  if (!node) return 'no-group';
+  node.click();
+  return 'clicked';
+})()"#;
+        match window.eval(expand_script) {
+            Ok(()) => eprintln!("[whale-pet][托盘菜单探针] 已展开第一个分类"),
+            Err(err) => eprintln!("[whale-pet][托盘菜单探针] 注入展开失败：{err}"),
         }
     });
 }

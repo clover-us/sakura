@@ -8,16 +8,16 @@
  * - **本页**负责内容：取状态（`get_tray_menu_state`）→ 画菜单 / 动作点播列表 →
  *   点一下就把动作交给宿主（`tray_menu_action`）→ 请宿主收起窗口（`close`）。
  *
- * ## 为什么不做"悬停级联子菜单"
+ * ## 动作点播为什么是"分类折叠 + 点击展开"
  *
- * 100 多个动画摊成三级级联，在托盘这种小弹层里很难点准；这里改成
- * **展开成一个可滚动列表**（分类做小标题），动作名一目了然。
- * 因为窗口不可聚焦（不抢用户正在打字的窗口），输入框收不到键盘，
- * 所以也**不做搜索框**——想搜索就打开设置窗口。
+ * 100 多个动画一次全铺出来会把弹层撑得很长，找一条要滚很久。现在默认**只列分类**，
+ * 点哪个展开哪个（右侧显示条数），另有一个「全部展开/收起」的开关。
+ * 因为窗口不可聚焦（不抢用户正在打字的窗口），输入框收不到键盘，所以**不做搜索框**——
+ * 想搜索就打开设置窗口。
  *
  * ## 为什么要自己 resize 窗口
  *
- * 主菜单是短列表（约 280px 高），动作点播展开后要高得多。窗口尺寸由宿主控制，
+ * 主菜单是短列表，动作点播展开后高度差别很大。窗口尺寸由宿主控制，
  * 页面量完内容高度后调 `resize_tray_menu` 报上去，宿主用**记住的锚点**重算位置。
  */
 import { petLog, petLogError, setLogLabel } from './bridge/log.ts';
@@ -65,36 +65,45 @@ interface TrayMenuState {
 const PANEL_W = 272;
 
 // ============================================================================
-//  图标（内联 SVG：不引外部资源，CSP 友好，颜色跟随 currentColor）
+//  图标
 // ============================================================================
 
+/**
+ * 图标形状取自 **Lucide**（https://lucide.dev，ISC 许可）：统一的 24×24 线性风格、
+ * 2px 圆头笔画。之前那套是手画的 16×16 路径，粗细不匀、齿轮还画成了"太阳"，
+ * 用户直接点名"图标丑"——这类基础图形没必要自己造。
+ *
+ * 只把**用得上的形状**内联进代码（不引依赖、不联网、CSP 友好），颜色跟随 currentColor。
+ */
 const ICONS: Record<string, string> = {
-  eye: '<path d="M1.6 8s2.4-4.2 6.4-4.2S14.4 8 14.4 8s-2.4 4.2-6.4 4.2S1.6 8 1.6 8z"/><circle cx="8" cy="8" r="1.9"/>',
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
   'eye-off':
-    '<path d="M1.6 8s2.4-4.2 6.4-4.2c1.2 0 2.2.3 3.1.8M14.4 8s-2.4 4.2-6.4 4.2c-1.2 0-2.2-.3-3.1-.8"/><path d="M2.6 2.6l10.8 10.8"/>',
-  home: '<path d="M3 8.4 8 4.2l5 4.2V13a.9.9 0 0 1-.9.9H3.9A.9.9 0 0 1 3 13z"/>',
+    '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
+  house:
+    '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   sparkles:
-    '<path d="M8 2.2l1.3 3.4 3.4 1.3-3.4 1.3L8 11.6 6.7 8.2 3.3 6.9l3.4-1.3z"/><path d="M12.4 10.6l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5-1.5-.6 1.5-.6z"/>',
-  gear:
-    '<circle cx="8" cy="8" r="2.3"/><path d="M8 1.9v1.7M8 12.4v1.7M2.4 8h1.7M11.9 8h1.7M4 4l1.2 1.2M10.8 10.8L12 12M12 4l-1.2 1.2M5.2 10.8L4 12"/>',
-  power: '<path d="M8 2.2v5"/><path d="M4.6 4.6a4.8 4.8 0 1 0 6.8 0"/>',
-  chevron: '<path d="M6 3.5 10.5 8 6 12.5"/>',
+    '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/>',
+  settings:
+    '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
 };
 
 function icon(name: string, size = 16): string {
-  return `<svg class="ic" viewBox="0 0 16 16" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] ?? ''}</svg>`;
+  return `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] ?? ''}</svg>`;
 }
 
-/** 面板左上角的小鲸鱼（与 exe 图标同一造型的简化版，用 SVG 手绘，省一张图片） */
+/** 面板左上角的小鲸鱼（与 `icons/design/app-icon.svg` 同一造型的简化版，手写成内联 SVG） */
 const WHALE_LOGO = `
-<svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true">
-  <ellipse cx="13.5" cy="17" rx="8.4" ry="6.6" fill="#fff"/>
-  <ellipse cx="24.5" cy="14.2" rx="4.6" ry="1.9" fill="#fff" transform="rotate(-19 24.5 14.2)"/>
-  <ellipse cx="24.5" cy="19.6" rx="4.6" ry="1.9" fill="#fff" transform="rotate(19 24.5 19.6)"/>
-  <ellipse cx="18.6" cy="17" rx="2.6" ry="1.8" fill="#fff"/>
-  <circle cx="9.6" cy="15.6" r="1.5" fill="#23304a"/>
-  <circle cx="9.6" cy="15.6" r="0.55" fill="#fff"/>
-  <ellipse cx="7.4" cy="19.2" rx="1.9" ry="1.2" fill="#ff9ec0"/>
+<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+  <ellipse cx="24.4" cy="13.4" rx="6" ry="2.6" fill="#fff" transform="rotate(-18 24.4 13.4)"/>
+  <ellipse cx="25" cy="18.6" rx="6" ry="2.6" fill="#fff" transform="rotate(18 25 18.6)"/>
+  <path d="M14 5.6c6.1 0 9.7 4 9.7 8.4 0 4.7-4.3 7.4-9.7 7.4S4.3 18.7 4.3 14C4.3 9.6 7.9 5.6 14 5.6Z" fill="#fff"/>
+  <ellipse cx="10.9" cy="14.4" rx="1.6" ry="1.8" fill="#25304C"/>
+  <ellipse cx="17.1" cy="14.4" rx="1.6" ry="1.8" fill="#25304C"/>
+  <ellipse cx="7.4" cy="18.6" rx="2" ry="1.2" fill="#FF9EC0"/>
+  <ellipse cx="20.6" cy="18.6" rx="2" ry="1.2" fill="#FF9EC0"/>
+  <path d="M12.4 19c.9 1.4 4 1.4 4.9 0" fill="none" stroke="#25304C" stroke-width="1.2" stroke-linecap="round"/>
 </svg>`;
 
 // ============================================================================
@@ -104,6 +113,8 @@ const WHALE_LOGO = `
 let state: TrayMenuState | null = null;
 /** 动作点播当前选中的宠物下标 */
 let pickerPet = 0;
+/** 已展开的分类（**默认空集合 = 全部收起**，用户点开哪个才展开哪个） */
+const expandedGroups = new Set<string>();
 let view: 'menu' | 'picker' = 'menu';
 let toastTimer: number | null = null;
 
@@ -113,7 +124,7 @@ function panel(): HTMLElement {
   return node;
 }
 
-/** 把窗口高度调成"内容刚好放得下"（含四周阴影留边） */
+/** 把窗口高度调成"内容刚好放得下"（宿主会按记住的锚点重算位置） */
 async function fitWindow(): Promise<void> {
   const element = panel();
   const height = Math.ceil(element.getBoundingClientRect().height);
@@ -176,17 +187,17 @@ function renderMenu(): void {
           <span class="label">${anyVisible ? '隐藏宠物' : '显示宠物'}</span>
         </button>
         <button class="item" data-act="home">
-          ${icon('home')}
+          ${icon('house')}
           <span class="label">回到初始位置</span>
         </button>
         <button class="item" data-act="picker">
           ${icon('sparkles')}
           <span class="label">动作点播</span>
-          <span class="chev">›</span>
+          <span class="chev">${icon('chevron', 14)}</span>
         </button>
         <div class="sep"></div>
         <button class="item" data-act="settings">
-          ${icon('gear')}
+          ${icon('settings')}
           <span class="label">设置…</span>
         </button>
         <button class="item danger" data-act="quit">
@@ -213,6 +224,16 @@ function renderMenu(): void {
   void fitWindow();
 }
 
+/** 动作分组：待机 / 点击回应 / 各随机分类（与设置窗口、右键菜单同一套分法） */
+function groupsFor(pet: TrayPet): Array<{ title: string; actions: string[] }> {
+  const animations = pet.animations;
+  return [
+    { title: '待机', actions: animations.idle },
+    { title: '点击回应', actions: animations.clicks },
+    ...animations.categories.map((category) => ({ title: category.id, actions: category.actions })),
+  ].filter((group) => group.actions.length > 0);
+}
+
 function showPicker(petIndex: number): void {
   const pets = state?.pets ?? [];
   if (pets.length === 0) {
@@ -221,15 +242,9 @@ function showPicker(petIndex: number): void {
   }
   pickerPet = Math.min(Math.max(petIndex, 0), pets.length - 1);
   const pet = pets[pickerPet];
-  const animations = pet.animations;
   const available = new Set(state?.availableAnimations ?? []);
-
-  // 分组顺序与设置窗口/右键菜单一致：待机、点击回应，然后各随机分类
-  const groups: Array<{ title: string; actions: string[] }> = [
-    { title: '待机', actions: animations.idle },
-    { title: '点击回应', actions: animations.clicks },
-    ...animations.categories.map((category) => ({ title: category.id, actions: category.actions })),
-  ].filter((group) => group.actions.length > 0);
+  const groups = groupsFor(pet);
+  const allExpanded = groups.length > 0 && groups.every((group) => expandedGroups.has(group.title));
 
   const petChips =
     pets.length > 1
@@ -247,18 +262,31 @@ function showPicker(petIndex: number): void {
     groups.length === 0
       ? '<div class="empty">这只宠物的动画池是空的（去设置窗口添加动作）</div>'
       : groups
-          .map(
-            (group) => `
-        <div class="group">${escapeHtml(group.title)}</div>
-        ${group.actions
-          .map(
-            (name) => `<div class="anim" data-anim="${escapeAttr(name)}">
-              <span class="label">${escapeHtml(name)}</span>
-              ${available.has(name) ? '' : '<span class="missing">无素材</span>'}
-            </div>`,
-          )
-          .join('')}`,
-          )
+          .map((group) => {
+            // 折叠态：标题行（chevron + 名称 + 条数），点了才展开具体动作
+            const open = expandedGroups.has(group.title);
+            const missing = group.actions.filter((name) => !available.has(name)).length;
+            return `
+        <div class="group" data-open="${open}">
+          <button class="group-head" data-group="${escapeAttr(group.title)}">
+            <span class="chev">${icon('chevron', 14)}</span>
+            <span class="label">${escapeHtml(group.title)}</span>
+            <span class="count">${group.actions.length}</span>
+            ${missing > 0 ? `<span class="missing">${missing} 无素材</span>` : ''}
+          </button>
+          ${
+            open
+              ? `<div class="group-body">${group.actions
+                  .map(
+                    (name) => `<div class="anim" data-anim="${escapeAttr(name)}">
+                      <span class="label">${escapeHtml(name)}</span>
+                    </div>`,
+                  )
+                  .join('')}</div>`
+              : ''
+          }
+        </div>`;
+          })
           .join('');
 
   panel().innerHTML = `
@@ -266,6 +294,11 @@ function showPicker(petIndex: number): void {
       <div class="picker-head">
         <button class="back" id="btn-back" title="返回">‹</button>
         <span class="picker-title">动作点播</span>
+        ${
+          groups.length > 0
+            ? `<button class="expand-all" id="btn-expand-all">${allExpanded ? '全部收起' : '全部展开'}</button>`
+            : ''
+        }
         ${pet.customBehaviour ? '<span class="badge" title="这只宠物有自己的一套动画池">自定义</span>' : ''}
       </div>
       ${petChips}
@@ -274,10 +307,25 @@ function showPicker(petIndex: number): void {
     </div>`;
 
   document.getElementById('btn-back')?.addEventListener('click', () => renderMenu());
+  document.getElementById('btn-expand-all')?.addEventListener('click', () => {
+    if (allExpanded) expandedGroups.clear();
+    else groups.forEach((group) => expandedGroups.add(group.title));
+    showPicker(pickerPet);
+  });
   panel()
     .querySelectorAll<HTMLButtonElement>('.chip')
     .forEach((chip) => {
       chip.addEventListener('click', () => showPicker(Number(chip.dataset.pet ?? '0')));
+    });
+  panel()
+    .querySelectorAll<HTMLButtonElement>('.group-head')
+    .forEach((head) => {
+      head.addEventListener('click', () => {
+        const title = head.dataset.group ?? '';
+        if (expandedGroups.has(title)) expandedGroups.delete(title);
+        else expandedGroups.add(title);
+        showPicker(pickerPet);
+      });
     });
   panel()
     .querySelectorAll<HTMLDivElement>('.anim')
@@ -317,7 +365,8 @@ async function bootstrap(): Promise<void> {
   setLogLabel('tray-menu');
   window.__whalePetTrayMenu = {
     show: () => {
-      // 弹出瞬间先用旧状态画一版（避免空白闪烁），随后拉新状态重画
+      // 每次弹出都回到"主菜单 + 分类全收起"的干净状态
+      expandedGroups.clear();
       if (!state) renderMenu();
       void refresh();
     },

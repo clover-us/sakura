@@ -54,7 +54,7 @@ pub fn build(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     TrayIconBuilder::with_id(ID)
-        // 图标由**代码画**（`icon_art`）：与 exe/任务栏那份是同一套几何，
+        // 图标是预生成的 RGBA（源自 icons/design/app-icon.svg，与 exe 的 .ico 同源）
         // 改一处两处同时变；托盘用 `Detail::Tray`（省掉 16px 看不清的气泡与嘴、尾叶加粗）
         .icon(tray_icon_image())
         // 没有任何原生菜单：左键直接切换显隐，右键弹自绘菜单
@@ -79,10 +79,28 @@ pub fn build(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 托盘图标（32×32，来自 `icon_art` 的托盘版细节）
+/// 托盘图标：**预生成的裸 RGBA**（32×32，4096 字节）。
+///
+/// 图标源是 SVG（`icons/design/app-icon.svg`），由 `cargo run --example make-icon` 栅格化成
+/// `icons/tray-32.rgba`；这里直接 `include_bytes!` 吃进来。
+///
+/// 为什么不在运行时画：应用**不该为了一个图标背上 SVG 渲染器**（resvg 及其依赖在二进制里
+/// 是好几 MB）。预生成还有个附带好处：托盘图标与 exe/任务栏用的 `.ico` **出自同一张 SVG**，
+/// 不可能不一致。（第一版是用 Rust 画 SDF，观感差到被用户点名"图标丑"，故换成 SVG。）
+const TRAY_RGBA: &[u8] = include_bytes!("../icons/tray-32.rgba");
+/// 托盘图标边长（必须与 `examples/make-icon.rs` 的 `TRAY_SIZE` 一致）
+const TRAY_SIZE: u32 = 32;
+
+/// 托盘图标（读预生成的 RGBA；长度不对说明生成物与代码版本不匹配，直接报出来）
 fn tray_icon_image() -> tauri::image::Image<'static> {
-    let (rgba, width, height) = crate::icon_art::tray_rgba(32);
-    tauri::image::Image::new_owned(rgba, width, height)
+    let expected = (TRAY_SIZE * TRAY_SIZE * 4) as usize;
+    if TRAY_RGBA.len() != expected {
+        eprintln!(
+            "[whale-pet] 托盘图标数据长度异常：{} 字节（应为 {expected}）——请重新运行 `cargo run --example make-icon`",
+            TRAY_RGBA.len()
+        );
+    }
+    tauri::image::Image::new_owned(TRAY_RGBA.to_vec(), TRAY_SIZE, TRAY_SIZE)
 }
 
 /// 有任意一只宠物当前可见吗（托盘菜单的"显示/隐藏"切换项据此决定动作与文案）

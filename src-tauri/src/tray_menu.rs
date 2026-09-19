@@ -19,6 +19,7 @@
 //! 托盘菜单是"整个应用的开关面板"。它们互斥显示——弹一个就收掉另一个，
 //! 否则屏幕上会同时挂两个弹出层。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
@@ -38,6 +39,18 @@ pub const PICKER_MAX_H: f64 = 520.0;
 
 /// 上一次弹出时的锚点（光标位置）：`resize` 要用它重算位置，否则展开动作列表时窗口会跳
 static LAST_ANCHOR: Mutex<Option<Vec2>> = Mutex::new(None);
+
+/// 是否忽略"外点关闭"（**只给排障探针用**）。
+///
+/// 截图探针弹出菜单后要等一两秒才截图，而本机桌面环境时不时会有零星的鼠标按下，
+/// 那一下会把菜单关掉——截图就变成"窗口不存在"（实测撞过两次）。
+/// 探针模式下关掉这个自动关闭，保证"弹出来了就能拍到"。
+static KEEP_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// 排障探针调用：弹出的菜单不要因为外点而自动关闭
+pub fn keep_open_for_probe() {
+    KEEP_OPEN.store(true, Ordering::SeqCst);
+}
 
 /// 启动时把窗口建好并隐藏（"点了就出现"，与右键菜单/气泡同一考虑）
 pub fn prepare(app: &AppHandle) -> Result<(), String> {
@@ -150,6 +163,9 @@ pub fn is_visible(app: &AppHandle) -> bool {
 
 /// 光标轮询里调用：菜单开着时，**在菜单矩形外按下鼠标**就关掉它（窗口不可聚焦，拿不到失焦事件）
 pub fn close_on_outside_press(app: &AppHandle, cursor: Vec2) {
+    if KEEP_OPEN.load(Ordering::SeqCst) {
+        return;
+    }
     if !is_visible(app) {
         return;
     }

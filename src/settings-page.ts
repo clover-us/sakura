@@ -140,16 +140,45 @@ const CORNERS: Array<{ value: Corner; label: string }> = [
   { value: 'bottom-right', label: '右下' },
 ];
 
-/** 与 exe 图标同一造型的简化鲸鱼（内联 SVG，避免引外部图片） */
+/**
+ * 图标形状取自 **Lucide**（https://lucide.dev，ISC 许可）：统一的 24×24 线性风格、2px 圆头笔画。
+ * （之前那套 16×16 手画路径粗细不匀、齿轮画成了"太阳"，被用户点名"图标丑"。）
+ * 只把用得到的形状内联进来：不引依赖、不联网、CSP 友好，颜色跟随 currentColor。
+ */
+const ICONS: Record<string, string> = {
+  'paw-print':
+    '<circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/><path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"/>',
+  'sliders-horizontal':
+    '<path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/>',
+  clapperboard:
+    '<path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+  rocket:
+    '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  'folder-open':
+    '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+  'rotate-ccw': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+};
+
+/** 内联 SVG 图标（`currentColor` 描边，尺寸由 CSS 控制） */
+function icon(name: string, size = 15): string {
+  return `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] ?? ''}</svg>`;
+}
+
+/** 与 `icons/design/app-icon.svg` 同一造型的简化鲸鱼（内联 SVG，避免引外部图片） */
 const WHALE_LOGO = `
 <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-  <ellipse cx="13.5" cy="17" rx="8.4" ry="6.6" fill="#fff"/>
-  <ellipse cx="24.5" cy="14.2" rx="4.6" ry="1.9" fill="#fff" transform="rotate(-19 24.5 14.2)"/>
-  <ellipse cx="24.5" cy="19.6" rx="4.6" ry="1.9" fill="#fff" transform="rotate(19 24.5 19.6)"/>
-  <ellipse cx="18.6" cy="17" rx="2.6" ry="1.8" fill="#fff"/>
-  <circle cx="9.6" cy="15.6" r="1.5" fill="#23304a"/>
-  <circle cx="9.6" cy="15.6" r="0.55" fill="#fff"/>
-  <ellipse cx="7.4" cy="19.2" rx="1.9" ry="1.2" fill="#ff9ec0"/>
+  <ellipse cx="24.4" cy="13.4" rx="6" ry="2.6" fill="#fff" transform="rotate(-18 24.4 13.4)"/>
+  <ellipse cx="25" cy="18.6" rx="6" ry="2.6" fill="#fff" transform="rotate(18 25 18.6)"/>
+  <path d="M14 5.6c6.1 0 9.7 4 9.7 8.4 0 4.7-4.3 7.4-9.7 7.4S4.3 18.7 4.3 14C4.3 9.6 7.9 5.6 14 5.6Z" fill="#fff"/>
+  <ellipse cx="10.9" cy="14.4" rx="1.6" ry="1.8" fill="#25304C"/>
+  <ellipse cx="17.1" cy="14.4" rx="1.6" ry="1.8" fill="#25304C"/>
+  <ellipse cx="7.4" cy="18.6" rx="2" ry="1.2" fill="#FF9EC0"/>
+  <ellipse cx="20.6" cy="18.6" rx="2" ry="1.2" fill="#FF9EC0"/>
+  <path d="M12.4 19c.9 1.4 4 1.4 4.9 0" fill="none" stroke="#25304C" stroke-width="1.2" stroke-linecap="round"/>
 </svg>`;
 
 // ============================================================================
@@ -190,9 +219,15 @@ function card(title: string, desc?: string): HTMLElement {
   return node;
 }
 
-function button(text: string, className?: string, onClick?: () => void): HTMLButtonElement {
-  const node = el('button', className, text);
+function button(text: string, className?: string, onClick?: () => void, iconName?: string): HTMLButtonElement {
+  const node = el('button', className);
   node.type = 'button';
+  if (iconName) {
+    const glyph = el('span', 'ic');
+    glyph.innerHTML = icon(iconName, 14);
+    node.appendChild(glyph);
+  }
+  if (text) node.appendChild(el('span', undefined, text));
   if (onClick) node.addEventListener('click', onClick);
   return node;
 }
@@ -317,7 +352,7 @@ function listEditor(
     row.appendChild(input);
     row.appendChild(
       (() => {
-        const remove = button('✕', 'ghost');
+        const remove = button('', 'ghost', undefined, 'x');
         remove.title = '删除这一项';
         remove.addEventListener('click', () => {
           const next = items.slice();
@@ -331,12 +366,12 @@ function listEditor(
     wrap.appendChild(row);
   });
   wrap.appendChild(
-    button(options.addLabel ?? '＋ 添加一项', undefined, () => {
+    button(options.addLabel ?? '添加一项', undefined, () => {
       const next = items.slice();
       next.push('');
       onChange(next);
       render();
-    }),
+    }, 'plus'),
   );
   return wrap;
 }
@@ -384,10 +419,10 @@ function poolEditor(animations: AnimationsConfig, options: { showWeights: boolea
     mirror.appendChild(el('span', undefined, '镜像会颠倒'));
     head.appendChild(mirror);
     head.appendChild(
-      button('✕', 'ghost', () => {
+      button('', 'ghost', () => {
         animations.categories.splice(index, 1);
         render();
-      }),
+      }, 'x'),
     );
     box.appendChild(head);
     box.appendChild(el('div', 'subhead'));
@@ -397,7 +432,7 @@ function poolEditor(animations: AnimationsConfig, options: { showWeights: boolea
     host.appendChild(box);
   });
   host.appendChild(
-    button('＋ 添加分类', undefined, () => {
+    button('添加分类', undefined, () => {
       animations.categories.push({
         id: `新分类 ${animations.categories.length + 1}`,
         weight: 10,
@@ -407,7 +442,7 @@ function poolEditor(animations: AnimationsConfig, options: { showWeights: boolea
       });
       markDirty();
       render();
-    }),
+    }, 'plus'),
   );
 
   // ---- 移动池 ----
@@ -428,19 +463,19 @@ function poolEditor(animations: AnimationsConfig, options: { showWeights: boolea
       row.appendChild(badge);
     }
     row.appendChild(
-      button('✕', 'ghost', () => {
+      button('', 'ghost', () => {
         moves.actions.splice(index, 1);
         render();
-      }),
+      }, 'x'),
     );
     moveList.appendChild(row);
   });
   moveList.appendChild(
-    button('＋ 添加移动动作', undefined, () => {
+    button('添加移动动作', undefined, () => {
       moves.actions.push({ name: available[0] ?? '' });
       markDirty();
       render();
-    }),
+    }, 'plus'),
   );
   host.appendChild(moveList);
 
@@ -569,7 +604,7 @@ function renderPetPage(pet: PetEntry, index: number): HTMLElement {
       markDirty();
       render();
       showToast('已从全局覆盖');
-    });
+    }, 'rotate-ccw');
     behaviour.appendChild(refresh);
     const editor = el('div');
     editor.style.marginTop = '10px';
@@ -592,7 +627,7 @@ function renderPetPage(pet: PetEntry, index: number): HTMLElement {
     view = config.pets.length > 0 ? `pet:${nextIndex}` : 'animations';
     markDirty();
     render();
-  });
+  }, 'x');
   // 稳定 id：排障探针要能"删掉第 N 只再保存"（见 src-tauri/src/diagnostics.rs）
   removeButton.id = `btn-del-pet-${index}`;
   danger.appendChild(removeButton);
@@ -695,7 +730,7 @@ function renderSystemPage(): HTMLElement {
         setStatus('error', `打开失败：${err instanceof Error ? err.message : String(err)}`);
         petLogError('设置: 打开配置文件所在目录失败', err);
       });
-    }),
+    }, 'folder-open'),
   );
   info.appendChild(actions);
   host.appendChild(start);
@@ -765,6 +800,9 @@ function renderNav(): void {
     item.type = 'button';
     // 稳定的 id：排障探针要能"切到某一页"截图（见 src-tauri/src/diagnostics.rs）
     item.id = `nav-pet-${index}`;
+    const glyph = el('span', 'ic');
+    glyph.innerHTML = icon('paw-print', 14);
+    item.appendChild(glyph);
     const label = el('span', 'label', pet.name.trim() || pet.id || `宠物 ${index + 1}`);
     item.appendChild(label);
     if (pet.animations != null || pet.animationWeights != null) {
@@ -783,7 +821,10 @@ function renderNav(): void {
   add.type = 'button';
   // 稳定 id：排障探针要能"加一只宠物再保存"（见 src-tauri/src/diagnostics.rs）
   add.id = 'btn-add-pet';
-  add.appendChild(el('span', 'label', '＋ 添加宠物'));
+  const addGlyph = el('span', 'ic');
+  addGlyph.innerHTML = icon('plus', 14);
+  add.appendChild(addGlyph);
+  add.appendChild(el('span', 'label', '添加宠物'));
   add.addEventListener('click', () => {
     if (!config) return;
     config.pets.push({
@@ -805,16 +846,19 @@ function renderNav(): void {
   nav.appendChild(add);
 
   nav.appendChild(el('div', 'nav-group', '通用'));
-  const commons: Array<{ id: string; label: string }> = [
-    { id: 'physics', label: '物理参数' },
-    { id: 'animations', label: '动画池默认值' },
-    { id: 'system', label: '启动与系统' },
-    { id: 'about', label: '关于' },
+  const commons: Array<{ id: string; label: string; glyph: string }> = [
+    { id: 'physics', label: '物理参数', glyph: 'sliders-horizontal' },
+    { id: 'animations', label: '动画池默认值', glyph: 'clapperboard' },
+    { id: 'system', label: '启动与系统', glyph: 'rocket' },
+    { id: 'about', label: '关于', glyph: 'info' },
   ];
   for (const entry of commons) {
     const item = el('button', 'nav-item');
     item.type = 'button';
     item.id = `nav-${entry.id}`;
+    const glyph = el('span', 'ic');
+    glyph.innerHTML = icon(entry.glyph, 14);
+    item.appendChild(glyph);
     item.appendChild(el('span', 'label', entry.label));
     item.dataset.active = String(view === entry.id);
     item.addEventListener('click', () => {
@@ -953,6 +997,10 @@ async function save(): Promise<void> {
 function bind(): void {
   setLogLabel('settings');
   byId('brand-logo').innerHTML = WHALE_LOGO;
+  // 顶部与底部的按钮是静态 HTML：这里补上图标（用同一套 Lucide 形状）
+  byId('btn-open-file').innerHTML = `${icon('folder-open', 14)}<span>打开配置文件</span>`;
+  byId('btn-reload').innerHTML = `${icon('rotate-ccw', 14)}<span>放弃改动</span>`;
+  byId('btn-save').innerHTML = `${icon('save', 14)}<span>保存并立即生效</span>`;
   byId('btn-save').addEventListener('click', () => void save());
   byId('btn-reload').addEventListener('click', () => {
     void load().then(() => showToast('已放弃未保存的改动'));

@@ -58,20 +58,31 @@ function Get-Title([IntPtr]$h) {
   $sb.ToString()
 }
 
-$found = [IntPtr]::Zero
-$foundTitle = ''
+# 收集**所有**匹配的可见窗口，最后取面积最大的那个：
+# 只取"第一个命中"会踩坑——别的应用（比如带"设置"二字的窗口）可能排在前面，
+# 于是脚本把无关窗口提到前台、截了一张别人的图（实测踩过）。
+$candidates = New-Object System.Collections.ArrayList
 $cb = [WinCap+EnumProc]{
   param([IntPtr]$h, [IntPtr]$l)
   if (-not [WinCap]::IsWindowVisible($h)) { return $true }
   $t = Get-Title $h
   if ($t -and ($t.ToLower().Contains($TitleLike.ToLower()))) {
-    $script:found = $h
-    $script:foundTitle = $t
-    return $false
+    $r = New-Object WinCap+RECT
+    $area = 0
+    if ([WinCap]::GetWindowRect($h, [ref]$r)) { $area = ($r.R - $r.L) * ($r.B - $r.T) }
+    [void]$candidates.Add([pscustomobject]@{ H = $h; Title = $t; Area = $area })
   }
   return $true
 }
 [void][WinCap]::EnumWindows($cb, [IntPtr]::Zero)
+if ($candidates.Count -eq 0) {
+  $found = [IntPtr]::Zero
+  $foundTitle = ''
+} else {
+  $best = $candidates | Sort-Object -Property Area -Descending | Select-Object -First 1
+  $found = $best.H
+  $foundTitle = $best.Title
+}
 
 if ($found -eq [IntPtr]::Zero) {
   Write-Error "没有找到标题包含「$TitleLike」的可见窗口"

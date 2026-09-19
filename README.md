@@ -58,8 +58,9 @@ M0 的目标是验证"Tauri 能不能把这套桌宠跑起来"这条链路上所
 
 | 能力 | 说明 |
 | --- | --- |
-| 应用与托盘图标 | 图标是**代码画的**（`icon_art.rs`，一份代码产出 `.ico` 与托盘图标）；`cargo run --example make-icon` 重新生成 |
-| 自绘托盘菜单 | 托盘右键弹出浅/深色圆角菜单（跟随系统）：显示/隐藏（一个切换项）、回到初始位置、动作点播、设置、退出 |
+| 应用与托盘图标 | 图形源是**矢量 SVG**（`src-tauri/icons/design/app-icon.svg`）：`cargo run --example make-icon` 用 resvg 生成 `.ico` 多尺寸 + png + 托盘用的 RGBA；三款候选见 `docs/screenshots/icon-candidates.png` |
+| 自绘托盘菜单 | 托盘右键弹出浅/深色圆角菜单（跟随系统）：显示/隐藏（一个切换项）、回到初始位置、动作点播、设置、退出；**动作点播的分类默认收起，点击才展开**（另有"全部展开/收起"） |
+| 界面图标 | 菜单/导航/按钮的线性图标取自 [Lucide](https://lucide.dev)（ISC 许可），形状内联、无依赖 |
 | 设置界面 | 左侧竖向导航 + 每只宠物独立页面 + 通用参数页；跟随系统深浅色 |
 | 每只宠物独立行为 | 每只宠物可**单独覆盖**动画池与权重（不设则跟随全局默认），右键菜单与托盘点播都按它自己的池 |
 
@@ -134,7 +135,7 @@ pwsh -File scripts\import-animations.ps1
 ```powershell
 cd src-tauri
 cargo run --bin logic-smoke      # 60 项断言：配置解析/校验/写回、每宠独立动画池、路径防穿越、JSONC 注释、几何换算
-cargo run --example make-icon    # 重新生成 icons/（图标是代码画的，见 src/icon_art.rs）
+cargo run --example make-icon    # 重新生成 icons/（图形源是 SVG，见 src-tauri/icons/design/）
 ```
 
 ---
@@ -250,7 +251,6 @@ M2 / M2.5 探针的证据见第 9 / 10 节。
 │  │  ├─ tray_menu.rs            自绘托盘菜单窗：摆位 / 外点关闭 / 按内容变高
 │  │  ├─ settings_window.rs      设置窗口的建/显/关（普通窗口）
 │  │  ├─ reload.rs               配置热重载与"保存即生效"（拆窗重建）
-│  │  ├─ icon_art.rs             **图标的绘制代码**（SDF；exe/托盘共用一份）
 │  │  ├─ pet_protocol.rs         自定义协议 pet://（提供动画/字体等本地素材）
 │  │  ├─ display.rs              显示器几何 + 变化轮询（并集，不是外接矩形）
 │  │  ├─ config.rs               配置读取/校验/JSONC 注释剥离/写回/每宠池解析
@@ -260,8 +260,8 @@ M2 / M2.5 探针的证据见第 9 / 10 节。
 │  │  ├─ watchdog.rs             取锁/窗口操作计时 + 主线程健康看门狗
 │  │  ├─ diagnostics.rs          诊断日志落盘 + 受控自测/探针入口
 │  │  └─ bin/logic-smoke.rs      纯逻辑冒烟检查（60 项断言）
-│  ├─ examples/make-icon.rs      图标生成工具（png/ico 只在 dev-dependencies）
-│  ├─ icons/                     生成的图标产物（ico 多尺寸 + png + 托盘版）
+│  ├─ examples/make-icon.rs      图标生成工具：SVG → png/ico/托盘 RGBA（resvg 只在 dev-dependencies）
+│  ├─ icons/                     design/*.svg 图形源 + 生成的 ico/png/托盘 RGBA
 │  └─ capabilities/default.json  最小权限集（宠物/气泡/菜单/设置四类窗口）
 ├─ reference/shared/             ← 从上游逐字节拷贝的纯逻辑（**零改动**）
 ├─ config/default-config.jsonc   默认配置模板（编译进 exe，首次运行释放）
@@ -383,3 +383,4 @@ M2 / M2.5 探针的证据见第 9 / 10 节。
 
 - 代码：MIT（与上游一致）
 - 素材（动画/提示词/源视频）：**允许开源使用，禁止商用**（上游约定，本应用沿用）
+- 界面图标形状：[Lucide](https://lucide.dev)（ISC 许可），已内联进 src/tray-menu-page.ts 与 src/settings-page.ts；应用图标为本项目自绘（src-tauri/icons/design/）

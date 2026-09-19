@@ -170,6 +170,16 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      /* 导航项图标（Lucide 形状，见 settings-page.ts 的 ICONS） */
+      .nav-item .ic {
+        display: inline-flex;
+        flex: none;
+        color: var(--muted);
+      }
+      .nav-item:hover .ic,
+      .nav-item[data-active='true'] .ic {
+        color: var(--accent);
+      }
       .nav-item .dot {
         width: 6px;
         height: 6px;
@@ -418,6 +428,20 @@
         border-radius: 8px;
         padding: 6px 12px;
         cursor: pointer;
+        /* 带图标的按钮：图标与文字同一行居中 */
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+      button .ic {
+        display: inline-flex;
+        flex: none;
+        color: var(--muted);
+      }
+      button.primary .ic,
+      button:hover .ic {
+        color: currentColor;
       }
       button:hover {
         border-color: var(--accent);

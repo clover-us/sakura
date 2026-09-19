@@ -4,91 +4,142 @@
 //!
 //! ```powershell
 //! cd src-tauri
-//! cargo run --example make-icon                 # 写出 icons/ 全套 + 候选对比图
-//! cargo run --example make-icon -- --style aqua # 换一种配色写 icons/
+//! cargo run --example make-icon                    # 用 design/app-icon.svg 生成 icons/ 全套
+//! cargo run --example make-icon -- --svg design/candidates/b-face.svg
+//! cargo run --example make-icon -- --sheet         # 只出候选对比图，不动正式图标
 //! ```
 //!
-//! 产出：
+//! ## 为什么图标源改成 SVG
+//!
+//! 第一版图标是**用 Rust 画 SDF 图元**拼出来的（`icon_art.rs`）。好处是"一份代码两个用途"
+//! （exe 的 .ico 与运行时托盘图标），但观感上限很低：圆润造型、渐变、柔和投影、笔画粗细
+//! 这些"让它不难看"的东西，用椭圆和圆角矩形拼不出来——用户看完的评价就是"图标丑"。
+//!
+//! 现在：**矢量 SVG 是唯一源**（`icons/design/`），本工具用 `resvg` 光栅化成
+//! PNG / 多尺寸 ICO / 托盘用的 RGBA 块。手改 SVG 比调 SDF 常量直观得多。
+//!
+//! 代价与取舍：
+//!   - 托盘图标需要运行时 RGBA，而**应用不该为了画图标背上 SVG 渲染器**（resvg 及其依赖
+//!     在二进制里是好几 MB）。所以托盘那份由本工具预先栅格化成一个 32×32 的 `.rgba`
+//!     裸数据文件（4KB，随仓库提交），应用 `include_bytes!` 直接吃；
+//!   - 因此改成 SVG 之后**必须记得跑一次本工具**：改了 `design/app-icon.svg` 却不重新生成，
+//!     图标不会变（`icons/tray-32.rgba` 是生成物，不手改）。
+//!
+//! ## 产物
+//!
 //!   - `icons/icon.ico`：16/24/32/48/64/128/256 七个尺寸（exe、任务栏、安装包都用它）
 //!   - `icons/icon.png`（1024）、`icons/32x32.png`、`icons/128x128.png`、`icons/128x128@2x.png`
-//!     （Tauri 打包与 macOS/移动端将来会用到）
-//!   - `icons/tray-32.png`：托盘版细节（省掉小尺寸看不清的气泡/嘴）
-//!   - `icons/candidates.png`：三种配色的对比图（64/32/16 真实像素 + 256 放大），用来挑样式
+//!   - `icons/tray-32.png`（给人看）与 `icons/tray-32.rgba`（给应用用，裸 RGBA8）
+//!   - `icons/candidates.png`：候选方案对比图（256 放大 + 64/32/16 真实像素）
 //!
-//! 为什么用 `examples/` 而不是 `src/bin/`：png 编码器只有这个工具需要，
-//! 放 examples 可以走 `[dev-dependencies]`，**应用二进制里不会多出这个依赖**。
+//! 依赖只在 `[dev-dependencies]`（resvg / png / ico），**应用二进制不会多出它们**。
 
 use std::fs::File;
 use std::io::BufWriter;
-use std::path::PathBuf;
-
-use whale_pet_desktop_lib::icon_art::{self, Detail, Raster, Style};
+use std::path::{Path, PathBuf};
 
 /// ico 里包含的尺寸（覆盖 Windows 任务栏/资源管理器/Alt-Tab 全部场景）
 const ICO_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
 
+/// 托盘图标边长（应用按这个尺寸读取 `tray-32.rgba`）
+const TRAY_SIZE: u32 = 32;
+
+struct Raster {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons");
-    let mut style = Style::Rose;
+    let icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons");
+    let mut source = icons_dir.join("design/app-icon.svg");
+    let mut sheet_only = false;
+
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--out" => {
-                if let Some(dir) = args.next() {
-                    out_dir = PathBuf::from(dir);
+            "--svg" => {
+                if let Some(path) = args.next() {
+                    let candidate = PathBuf::from(&path);
+                    source = if candidate.is_absolute() { candidate } else { icons_dir.join(candidate) };
                 }
             }
-            "--style" => {
-                if let Some(name) = args.next() {
-                    style = match name.as_str() {
-                        "rose" => Style::Rose,
-                        "midnight" => Style::Midnight,
-                        "aqua" => Style::Aqua,
-                        other => return Err(format!("未知配色：{other}（可选 rose / midnight / aqua）").into()),
-                    };
-                }
-            }
-            other => return Err(format!("未知参数：{other}").into()),
+            "--sheet" => sheet_only = true,
+            other => return Err(format!("未知参数：{other}（可用 --svg <path> / --sheet）").into()),
         }
     }
-    std::fs::create_dir_all(&out_dir)?;
 
-    // ---- 1. 主图标（1024 与 Tauri 约定的几个尺寸）----
-    let master = icon_art::render(1024, style, Detail::Full);
-    write_png(&out_dir.join("icon.png"), &master)?;
-    for (name, size) in [("32x32.png", 32u32), ("128x128.png", 128), ("128x128@2x.png", 256)] {
-        write_png(&out_dir.join(name), &icon_art::render(size, style, Detail::Full))?;
+    std::fs::create_dir_all(&icons_dir)?;
+
+    // ---- 候选对比图（挑样式用）----
+    write_png(&icons_dir.join("candidates.png"), &candidate_sheet(&icons_dir, &source)?)?;
+    if sheet_only {
+        println!("候选对比图已更新：{}", icons_dir.join("candidates.png").display());
+        return Ok(());
     }
 
-    // ---- 2. 多尺寸 ico ----
-    // `encode` 会按尺寸自动挑 PNG 还是 BMP 存储（大尺寸走 PNG，小尺寸走 BMP 兼容性最好）
+    // ---- 正式图标 ----
+    if !source.is_file() {
+        return Err(format!("找不到图标源文件：{}", source.display()).into());
+    }
+    let svg = std::fs::read_to_string(&source)?;
+    println!("图标源：{}", source.display());
+
+    let master = rasterize(&svg, 1024)?;
+    write_png(&icons_dir.join("icon.png"), &master)?;
+    for (name, size) in [("32x32.png", 32u32), ("128x128.png", 128), ("128x128@2x.png", 256)] {
+        write_png(&icons_dir.join(name), &rasterize(&svg, size)?)?;
+    }
+
+    // 多尺寸 ico：`encode` 会按尺寸自动挑 PNG 还是 BMP 存储
     let mut ico = ico::IconDir::new(ico::ResourceType::Icon);
     for size in ICO_SIZES {
-        let raster = icon_art::render(size, style, Detail::Full);
+        let raster = rasterize(&svg, size)?;
         let image = ico::IconImage::from_rgba_data(raster.width, raster.height, raster.rgba);
         ico.add_entry(ico::IconDirEntry::encode(&image)?);
     }
-    let ico_path = out_dir.join("icon.ico");
-    ico.write(&mut BufWriter::new(File::create(&ico_path)?))?;
+    ico.write(&mut BufWriter::new(File::create(icons_dir.join("icon.ico"))?))?;
 
-    // ---- 3. 托盘版（32px：应用运行时也是这套细节）----
-    write_png(&out_dir.join("tray-32.png"), &icon_art::render(32, style, Detail::Tray))?;
-    write_png(&out_dir.join("tray-16.png"), &icon_art::render(16, style, Detail::Tray))?;
+    // 托盘：PNG 给人看，RGBA 裸数据给应用读（应用不背 SVG 渲染器）
+    let tray = rasterize(&svg, TRAY_SIZE)?;
+    write_png(&icons_dir.join("tray-32.png"), &tray)?;
+    std::fs::write(icons_dir.join("tray-32.rgba"), &tray.rgba)?;
+    println!(
+        "托盘图标：tray-32.png + tray-32.rgba（{}×{}，{} 字节裸 RGBA）",
+        tray.width,
+        tray.height,
+        tray.rgba.len()
+    );
 
-    // ---- 4. 候选对比图（挑样式用）----
-    write_png(&out_dir.join("candidates.png"), &candidate_sheet(style))?;
-
-    println!("图标已写入 {}", out_dir.display());
-    println!("  当前配色：{}", style.id());
-    for entry in std::fs::read_dir(&out_dir)? {
+    println!("图标已写入 {}", icons_dir.display());
+    for entry in std::fs::read_dir(&icons_dir)? {
         let entry = entry?;
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        println!("  - {} ({} 字节)", entry.file_name().to_string_lossy(), size);
+        if entry.file_type()?.is_dir() {
+            continue;
+        }
+        println!("  - {} ({} 字节)", entry.file_name().to_string_lossy(), entry.metadata()?.len());
     }
     Ok(())
 }
 
-fn write_png(path: &PathBuf, raster: &Raster) -> Result<(), Box<dyn std::error::Error>> {
+/// 用 resvg 把 SVG 栅格化成指定边长的 RGBA
+fn rasterize(svg: &str, size: u32) -> Result<Raster, Box<dyn std::error::Error>> {
+    let options = usvg::Options::default();
+    let tree = usvg::Tree::from_str(svg, &options)?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
+        .ok_or_else(|| format!("创建 {size}×{size} 画布失败"))?;
+    // 等比缩放到目标边长（图标 SVG 都是正方形，长宽比一致）
+    let scale = size as f32 / tree.size().width();
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
+    for pixel in pixmap.pixels() {
+        let color = pixel.demultiply();
+        rgba.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
+    }
+    Ok(Raster { width: size, height: size, rgba })
+}
+
+fn write_png(path: &Path, raster: &Raster) -> Result<(), Box<dyn std::error::Error>> {
     let file = BufWriter::new(File::create(path)?);
     let mut encoder = png::Encoder::new(file, raster.width, raster.height);
     encoder.set_color(png::ColorType::Rgba);
@@ -98,43 +149,62 @@ fn write_png(path: &PathBuf, raster: &Raster) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// 三种配色的对比图：每种一列（256 放大 + 64/32/16 真实像素）
-fn candidate_sheet(current: Style) -> Raster {
-    const CELL: u32 = 300;
-    const ROW_BIG: u32 = 260;
-    const SHEET_W: u32 = CELL * 3;
-    const SHEET_H: u32 = ROW_BIG + 150;
-    let mut sheet = vec![0u8; (SHEET_W * SHEET_H * 4) as usize];
-    // 浅灰底，方便看透明边缘与深色方案
+/// 候选对比图：每个候选一列（256 放大 + 64/32/16 真实像素）
+fn candidate_sheet(icons_dir: &Path, current: &Path) -> Result<Raster, Box<dyn std::error::Error>> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    let dir = icons_dir.join("design/candidates");
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.extension().map(|ext| ext == "svg").unwrap_or(false) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    if files.is_empty() {
+        return Err(format!("{} 下没有候选 SVG", dir.display()).into());
+    }
+
+    const CELL: u32 = 320;
+    const BIG: u32 = 256;
+    let sheet_w = CELL * files.len() as u32;
+    let sheet_h = BIG + 170;
+    let mut sheet = vec![0u8; (sheet_w * sheet_h * 4) as usize];
     for pixel in sheet.chunks_exact_mut(4) {
         pixel.copy_from_slice(&[246, 246, 248, 255]);
     }
-    for (column, style) in Style::all().into_iter().enumerate() {
-        let x0 = column as u32 * CELL + (CELL - 256) / 2;
-        blit(&mut sheet, SHEET_W, &icon_art::render(256, style, Detail::Full), x0, 10);
-        let mut x = column as u32 * CELL + 40;
+
+    for (column, path) in files.iter().enumerate() {
+        let svg = std::fs::read_to_string(path)?;
+        let base_x = column as u32 * CELL;
+        let big = rasterize(&svg, BIG)?;
+        blit(&mut sheet, sheet_w, &big, base_x + (CELL - BIG) / 2, 12);
+        let mut x = base_x + 34;
         for size in [64u32, 32, 16] {
-            let y = ROW_BIG + 20 + (64 - size) / 2;
-            blit(&mut sheet, SHEET_W, &icon_art::render(size, style, Detail::Tray), x, y);
-            x += size + 24;
+            let small = rasterize(&svg, size)?;
+            blit(&mut sheet, sheet_w, &small, x, BIG + 30 + (64 - size) / 2);
+            x += size + 26;
         }
-        // 标出当前选中的方案（在标题位置画一条短线）
-        if style == current {
-            let y = ROW_BIG + 110;
-            for dy in 0..6 {
-                for dx in 0..60 {
-                    let px = column as u32 * CELL + 120 + dx;
+        // 当前正式图标的那一款画一条粉色下划线
+        if path == current {
+            let y = BIG + 120;
+            for dy in 0..7 {
+                for dx in 0..70 {
+                    let px = base_x + (CELL - 70) / 2 + dx;
                     let py = y + dy;
-                    let idx = ((py * SHEET_W + px) * 4) as usize;
-                    sheet[idx..idx + 4].copy_from_slice(&[232, 116, 160, 255]);
+                    let idx = ((py * sheet_w + px) * 4) as usize;
+                    if idx + 4 <= sheet.len() {
+                        sheet[idx..idx + 4].copy_from_slice(&[236, 111, 155, 255]);
+                    }
                 }
             }
         }
     }
-    Raster { width: SHEET_W, height: SHEET_H, rgba: sheet }
+    Ok(Raster { width: sheet_w, height: sheet_h, rgba: sheet })
 }
 
-/// 把一张 RGBA 图贴到另一张上（左上角为 `(x0, y0)`，直接覆盖）
+/// 把一张 RGBA 图贴到另一张上（左上角 `(x0, y0)`，按 alpha 混合）
 fn blit(dst: &mut [u8], dst_w: u32, src: &Raster, x0: u32, y0: u32) {
     for y in 0..src.height {
         for x in 0..src.width {

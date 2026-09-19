@@ -23,7 +23,7 @@ pub mod bubble;
 pub mod commands;
 pub mod config;
 pub mod display;
-pub mod icon_art;
+
 pub mod menu_window;
 pub mod model;
 pub mod pet_protocol;
@@ -304,16 +304,20 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ---- 7d. 托盘菜单样式探针（`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker]`：延时后弹出，供截图）----
+    // ---- 7d. 托盘菜单样式探针（`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker|:picker-expanded]）----
     if let Ok(value) = std::env::var("WHALE_PET_DIAG_TRAY_MENU") {
         let (delay_text, mode) = match value.split_once(':') {
-            Some((delay, mode)) => (delay, Some(mode)),
-            None => (value.as_str(), None),
+            Some((delay, mode)) => (delay, mode),
+            None => (value.as_str(), ""),
         };
         let delay: u64 = delay_text.parse().unwrap_or(4000);
-        let open_picker = mode == Some("picker");
-        eprintln!("[whale-pet] 启用托盘菜单探针（{delay}ms 后弹出，展开点播={open_picker}）");
-        diagnostics::spawn_tray_menu_probe(app.clone(), delay, open_picker);
+        let mode: &'static str = match mode {
+            "picker" => "picker",
+            "picker-expanded" => "picker-expanded",
+            _ => "",
+        };
+        eprintln!("[whale-pet] 启用托盘菜单探针（{delay}ms 后弹出，模式={mode}）");
+        diagnostics::spawn_tray_menu_probe(app.clone(), delay, mode);
     }
 
     Ok(())

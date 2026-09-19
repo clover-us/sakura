@@ -33,6 +33,10 @@ tauri-build = { version = "2", features = [] }
 png = "0.17"
 # 注意：ico 0.5 把 png 作为**必需依赖**（不是可选 feature），所以不能写 features = ["png"]
 ico = "0.5"
+# 图标源是 SVG（icons/design/*.svg）：用 resvg 光栅化。
+# 只在生成工具里用得到，应用运行时读的是预生成的 tray-32.rgba（4KB 裸数据）。
+resvg = "0.45"
+usvg = "0.45"
 
 [dependencies]
 # ---------------------------------------------------------------------------

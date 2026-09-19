@@ -232,16 +232,70 @@
         background: var(--line);
         border-radius: 8px;
       }
+
+      /* ---- 动作点播：分类折叠（默认全收起，点标题展开） ---- */
       .group {
-        padding: 8px 10px 3px;
+        margin: 1px 0;
+      }
+      .group-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 10px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .group-head:hover {
+        background: var(--hover);
+        color: var(--accent);
+      }
+      .group-head .chev {
+        display: inline-flex;
+        flex: none;
+        color: var(--muted);
+        transition: transform 0.14s ease;
+      }
+      .group-head:hover .chev {
+        color: var(--accent);
+      }
+      .group[data-open='true'] > .group-head .chev {
+        transform: rotate(90deg);
+      }
+      .group-head .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+      }
+      .group-head .count {
+        flex: none;
         font-size: 11.5px;
         color: var(--muted);
+        background: var(--hover);
+        border-radius: 999px;
+        padding: 0 7px;
+      }
+      .group-head .missing {
+        flex: none;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .group-body {
+        padding: 1px 0 4px 14px;
       }
       .anim {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 7px 10px;
+        padding: 6px 10px;
         border-radius: 7px;
         cursor: pointer;
       }
@@ -249,10 +303,20 @@
         background: var(--hover);
         color: var(--accent);
       }
-      .anim .missing {
-        margin-left: auto;
-        font-size: 11px;
+      .expand-all {
+        flex: none;
+        border: 0;
+        background: transparent;
         color: var(--muted);
+        font: inherit;
+        font-size: 11.5px;
+        padding: 3px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .expand-all:hover {
+        background: var(--hover);
+        color: var(--accent);
       }
       .empty {
         padding: 14px 12px;
