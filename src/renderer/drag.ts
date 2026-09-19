@@ -1,10 +1,14 @@
 /**
  * 拖拽交互：过阻尼弹簧跟手 + 松手甩抛。
  *
- * 与上游 dsh-pet 的手感严格对齐，靠的是**复用同一份纯逻辑**：
- *   - 弹簧步进        → `@shared/physics.ts` 的 `springStep`（K=200 / C=30，ζ≈1.06 过阻尼，不 overshoot）
- *   - 松手初速估算    → 同文件的 `estimateReleaseVelocity`（端点均值 + 峰值加权 + 停顿判定 + 软钳速）
+ * 与上游 dsh-pet 的手感对齐，靠的是**复用同一份纯逻辑**：
+ *   - 松手初速估算    → `@shared/physics.ts` 的 `estimateReleaseVelocity`（端点均值 + 峰值加权 + 停顿判定 + 软钳速）
+ *   - 拖拽轨迹裁剪    → 同文件的 `trimTrail`
  * 本文件只负责"什么时候调用它们"以及输入/边界判定，不做任何物理公式的二次实现。
+ *
+ * **唯一的例外是跟手弹簧**（见下面的 `DRAG_FOLLOW_K/C`）：上游 `springStep` 的 K/C 比例
+ * 让随动滞后恒为 `v·C/K ≈ 0.15s`，快速拖动时宠物明显"飘在后面"（用户实测反馈），
+ * 因此这一层按"同一套过阻尼弹簧公式、不同的 K/C"自己积分——shared 文件保持零改动。
  *
  * 坐标约定（关键，错了必然错位）：
  *   物理层（physics.ts）的坐标语义 = **宠物包围盒左上角**的屏幕坐标。
@@ -18,7 +22,6 @@
 import {
   DEFAULT_PHYSICS,
   estimateReleaseVelocity,
-  springStep,
   trimTrail,
   type DragSample,
 } from '@shared/physics.ts';
@@ -51,6 +54,26 @@ export interface DragCallbacks {
 
 /** 弹簧跟随的每帧最大积分步长（秒）：与物理层 MAX_STEP_DT 同一量级，防卡顿后巨帧跳变 */
 const MAX_SPRING_DT = 0.05;
+
+/**
+ * 跟手弹簧刚度。**与上游不同的唯一一处物理常量**（上游 `SPRING_K = 200`）。
+ *
+ * 为什么调它：弹簧跟随的**稳态滞后**是 `v · C / K`——与刚度无关、只由 C/K 决定。
+ * 上游 C/K = 30/200 = 0.15s，等于"宠物永远比光标晚 0.15 秒"：快速拖动（1000px/s）时
+ * 能落后 150px，用户实测的观感就是"跟得太松、飘"（`?autotest=10` 量到的平均滞后 41~55px
+ * 是 560px/s 匀速拖动下的值）。
+ *
+ * 取值：K = 600，并按**临界阻尼**配 C = 2√K ≈ 49（ζ = 1.0，不 overshoot）：
+ *   C/K = 2/√600 ≈ 0.0817s → 同一拖动速度下滞后只有原来的 **55%**；
+ *   刚度提高 3 倍仍然安全：显式欧拉稳定的步长上限是 2/√K ≈ 82ms，而单帧步长被
+ *   `MAX_SPRING_DT = 50ms` 钳住（上游 K=200 时上限 141ms，余量更大，所以这是"更贴手"
+ *   与"卡顿后不抖"之间的折中，不要再往上翻倍）。
+ *
+ * 想更贴/更松就只改 K 这一个数（C 会跟着重算，阻尼形态保持不变）。
+ */
+const DRAG_FOLLOW_K = 600;
+/** 跟手弹簧阻尼：临界阻尼 ζ=1（上游是 ζ≈1.06 的轻微过阻尼，这里不要 overshoot） */
+const DRAG_FOLLOW_C = 2 * Math.sqrt(DRAG_FOLLOW_K);
 
 /** 拖拽轨迹保留窗口（ms）：只留最近这一段做初速估算 */
 
@@ -222,8 +245,12 @@ export class DragController {
    * 弹簧跟手单步积分。
    *
    * 用**过阻尼弹簧**而不是"位置直接等于指针"：后者在快速甩动时会让宠物瞬间贴合指针，
-   * 失去"被拎着甩"的重量感；弹簧则有一点自然的滞后与回正（K=200/C=30 由上游调定）。
-   * 目标位置是窗口级的，因此这里算出来的 `box` 直接就是窗口该去的位置。
+   * 失去"被拎着甩"的重量感；弹簧则保留一点自然的滞后与回正。
+   *
+   * 公式与上游 `springStep` 完全一致：
+   *   `v' = v + ((target − x)·K − v·C)·power·dt`，随后 `x' = x + v'·dt`
+   * `power` 仍然取配置里的 `throwPower`（它把 K/C 同乘，只改变收敛**速度**、
+   * 不改变稳态滞后 `v·C/K`）。唯一差别是 K/C 的取值，理由见 `DRAG_FOLLOW_K` 的注释。
    */
   private stepSpring(now: number): void {
     const dt = Math.min(Math.max((now - this.lastStepAt) / 1000, 0), MAX_SPRING_DT);
@@ -231,8 +258,10 @@ export class DragController {
     if (dt <= 0) return;
 
     const power = this.physics.throwPower;
-    this.velocity.x = springStep(this.velocity.x, this.box.x, this.target.x, dt, power);
-    this.velocity.y = springStep(this.velocity.y, this.box.y, this.target.y, dt, power);
+    const k = DRAG_FOLLOW_K * power;
+    const c = DRAG_FOLLOW_C * power;
+    this.velocity.x += ((this.target.x - this.box.x) * k - this.velocity.x * c) * dt;
+    this.velocity.y += ((this.target.y - this.box.y) * k - this.velocity.y * c) * dt;
     this.box.x += this.velocity.x * dt;
     this.box.y += this.velocity.y * dt;
     this.callbacks.onDragMove({ ...this.box });

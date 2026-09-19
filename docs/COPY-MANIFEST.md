@@ -66,6 +66,7 @@
 | `inputBusy` 保护（`preload.js` / `main.js`） | `pet_window.rs::apply_fallback_hit` + `runtime.ts::reportBusy` | **语义继承**：Tauri 没有 `setIgnoreMouseEvents(forward)`，方案改为"Rust 轮询光标 + 前端精确判定"，但"busy 期间绝不翻回穿透"这条铁律原样继承 |
 | 每宠一个局部小窗（避免 DWM 黑屏） | `pet_window.rs::create_one` | **结论继承**：上游实测全屏透明窗会黑屏，直接采用小窗方案 |
 | 「配置是唯一真相，失败大声报错」 | `config.rs` + `renderer/dom.ts::showFatalError` | **约定继承** |
+| 跟手弹簧 `springStep`（K=200 / C=30，ζ≈1.06） | `src/renderer/drag.ts` 的 `DRAG_FOLLOW_K/C`（K=600，C=2√K） | **有意偏离（唯一一处物理常量）**：公式一字不差照抄，只改 K/C 的比例——上游 `v·C/K = 0.15s` 的随动滞后在快速拖动时"太飘"（用户实测），改成 `0.082s`（滞后降到 55%），阻尼仍按临界配置不 overshoot。`reference/shared/physics.ts` 保持**逐字节零改动**；这颗旋钮在 `drag.ts` 里是单个常量 |
 
 ## 四、如何从上游取更新
 
