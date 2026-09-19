@@ -63,6 +63,12 @@ async function bootstrap(): Promise<void> {
     await listen<{ anim: string | null; action: string | null }>('pet://menu-action', (action) => {
       void runtime?.onMenuAction(action);
     });
+    // 碎碎念（M3）：宿主按周期生成一句话，这里负责"说"——弹气泡（10 秒）+ 可选播一条 whisper 动画。
+    // 生成在宿主侧（Rust），因为周期、多宠物轮换、失败退避都只在那一处；页面只管表现。
+    await listen<{ petLabel: string; text: string }>('pet://whisper', (payload) => {
+      if (payload.petLabel !== label) return;
+      void runtime?.onWhisper(payload.text);
+    });
     // 当前窗口位置主动拉一次（事件可能早于本模块注册，避免首帧位置为空）
     runtime.setWindowState(await invoke<PetRuntimeState>('get_pet_runtime', { label }));
 

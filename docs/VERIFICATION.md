@@ -1896,3 +1896,117 @@ foreach ($pid in (Get-NetTCPConnection -LocalPort 1420 -State Listen).OwningProc
 | 截图脚本按标题匹配到**别的应用**（"设置"二字撞车），把无关窗口提到前台截了一张别人的图 | `capture-window.ps1` 改为收集**所有**匹配窗口后取**面积最大**的那个 |
 | 弹出自绘菜单后等一两秒截图，期间桌面环境的零星鼠标按下会触发"外点关闭"，截图变成"窗口不存在"（撞两次） | 探针模式下调用 `tray_menu::keep_open_for_probe()` 关掉自动关闭，保证"弹出来了就能拍到"；正常路径不受影响 |
 
+
+---
+
+# 13. M3 第一阶段：LLM 能力（碎碎念 / 对话）验证记录（2026-09-19）
+
+设计说明见 [`LLM.md`](LLM.md)。这一阶段的目标是"**默认零联网、开启后可用、密钥安全、
+有不依赖真实 key 的验证手段**"，四件事都做到了，而且证据全部可在本机复现。
+
+## 13.1 交付物
+
+| 交付物 | 位置 | 说明 |
+| --- | --- | --- |
+| 适配层 | `src-tauri/src/llm.rs` | OpenAI 兼容请求构造 / 响应解析 / 结构化失败；ureq + native-tls；**在 Rust 侧发请求** |
+| 配置 | `src-tauri/src/config.rs` 的 `llm` 段 | 默认全关；provider / model / baseUrl / 温度 / 超时 / 两个功能开关 / 周期 / 记忆轮数 |
+| 密钥 | `src-tauri/src/secret.rs` | DPAPI（手写 FFI）加密存 `llm-key.bin`；日志只出现打码形态 |
+| 记忆 | `src-tauri/src/memory.rs` | `memory.json` 全量保存 + 最近 N 轮进上下文；损坏先备份再重建；写盘串行化 |
+| 碎碎念 | `src-tauri/src/whisper.rs` + `runtime.ts::onWhisper` | 宿主定时生成 → 事件 → 气泡 10 秒 + 可选 whisper 动画 |
+| 设置页 | `settings.html` / `settings-page.ts` 的「AI」页 | 开关、provider、模型、Key 保存/清除、自检、清空记忆、隐私说明 |
+| 验证工具 | `src-tauri/src/bin/mock-llm.rs` + `WHALE_PET_DIAG_LLM` | 本地 mock 服务端（零依赖）+ 进程内探针 |
+
+## 13.2 默认零联网（红线）
+
+原始配置（**没有 `llm` 段**）启动，三个 AI 动作全部被拒且**一个请求都没发**：
+
+```text
+[whale-pet][LLM 探针] 动作=all provider=deepseek baseUrl=https://api.deepseek.com model=deepseek-chat enabled=false
+[whale-pet][LLM 探针] 自检失败（disabled）：AI 功能还没开启（设置 → AI）
+[whale-pet][LLM 探针] 碎碎念失败（disabled）：AI 功能还没开启（设置 → AI）
+[whale-pet][LLM 探针] 对话失败（disabled）：AI 功能还没开启（设置 → AI）
+```
+
+对照 mock 服务端的日志：这一轮**没有收到任何连接** ✓。
+
+> 顺带说明选型：请求在 **Rust 侧**发（页面 `fetch` 会被各家 API 的 CORS 挡住），
+> 于是页面 CSP **不需要放行任何外部域名**——少一个安全口子。
+
+## 13.3 端到端（对着本地 mock，不需要真实 key）
+
+`cargo run --bin mock-llm` + `provider=ollama`（本地模型不需要 key）+ `baseUrl` 指向 mock：
+
+```text
+[whale-pet][LLM 探针] 自检成功：（mock 回复）收到 2 条消息
+[whale-pet][LLM 探针] 碎碎念成功：（mock 回复）收到 2 条消息
+[whale-pet][LLM 探针] 对话成功：（mock 回复）收到 2 条消息
+[whale-pet][LLM 探针] 记忆文件 …\memory.json：2 条（最近一轮：Some("你好呀，今天过得怎么样？") …）
+```
+
+**mock 侧把收到的 prompt 原文打了出来**，这是"请求组装是否符合设计"最直接的证据
+（人设 + 名字声明 + 历史 + 本轮）：
+
+```text
+[mock-llm] POST /chat/completions
+[mock-llm]   model=mock
+[mock-llm]   system: 你是主人桌面上的Q版小鲸鱼桌宠，会时不时碎碎念一句。…不要提你是AI。
+[mock-llm]   system: 你的名字是“小鲸鱼”。
+[mock-llm]   user: 随便说一句日常碎碎念，一句就好，20 字以内。     ← 碎碎念
+…
+[mock-llm]   user: 你好呀，今天过得怎么样？                        ← 对话第一轮
+[mock-llm]   assistant: （mock 回复）收到 2 条消息
+[mock-llm]   user: 你好呀，今天过得怎么样？                        ← 对话第二轮（带上了上一轮）
+```
+
+第二轮 mock 收到 **4 条消息**（system + user + assistant + user）→ "最近 N 轮进上下文"成立；
+`memory.json` 也从 2 条涨到 4 条 ✓。
+
+## 13.4 失败分支（逐条实测）
+
+mock 端按路径提供 5 种坏行为，逐条验证适配层的错误映射与中文提示：
+
+| 场景 | 探针输出 |
+| --- | --- |
+| 401 | `自检失败（unauthorized）：API key 无效或没有权限（401/403）` |
+| 429 | `自检失败（rate-limited）：请求太频繁或额度用尽（429）` |
+| 200 但内容为空 | `自检失败（bad-response）：…模型未返回文本` |
+| 200 但不是 JSON | `自检失败（bad-response）：…响应不是合法 JSON：expected value at line 1 column 1` |
+| 慢响应 + `timeoutSec=5` | `自检失败（timeout）：模型服务响应超时` |
+| `deepseek` 但没存 key | `自检失败（no-key）：还没有填 API key（设置 → AI）`（**未发请求**） |
+| 总开关关闭 | `自检失败（disabled）：AI 功能还没开启（设置 → AI）`（**未发请求**） |
+
+## 13.5 密钥安全（走真实 UI）
+
+探针 `WHALE_PET_DIAG_SETTINGS=llmkeysave` 做的事与用户完全一致：**切到 AI 页 → 填 key →
+点「保存密钥」→ 点「开始自检」**。证据：
+
+```text
+[whale-pet] 已保存 API key（sk-…6789（共 24 字符），DPAPI 加密后 246 字节）   ← 日志里是打码形态
+密钥文件存在=True；文件里含明文 sk-mock-probe：False                          ← 落盘是密文
+配置里含明文：False                                                          ← 配置里根本没有 key
+```
+
+设置页底部状态栏同时显示了自检结果（截图 [`screenshots/settings-ai.png`](screenshots/README.md)）：
+
+```text
+自检通过，模型回复：（mock 回复）收到 2 条消息
+```
+
+## 13.6 纯逻辑冒烟：60 → 88 项
+
+新增 28 项覆盖"不需要网络"的部分：配置校验的 6 条拒绝路径、provider 预置值与"是否需要 key"、
+system prompt 与消息顺序、请求体（含"不传 maxTokens"）、响应解析的 5 种形状、
+DPAPI 往返 + 落盘无明文 + `mask` 不泄露、记忆的全量保存 / 最近 N 轮截断 / 损坏自愈与备份。
+
+**这一段抓到一个真 bug（会直接导致应用起不来）**：
+`llm: LlmConfig` 用了 `#[serde(default)]`，而字段级默认值是另一套；`serde` 在字段缺失时调的是
+`Default::default()`，于是"老配置没有 llm 段"会得到 **空 provider → 校验失败 → 启动 panic**。
+现在三个 `Default` 手写实现统一改成"从 `{}` 反序列化"，默认值只剩一处真相。
+
+## 13.7 本轮未完成（下一步）
+
+| 项 | 状态 |
+| --- | --- |
+| 对话的**输入界面**（宠物角上的单行输入框） | 后端 `llm_chat` + 记忆已通并验证；输入窗（独立可聚焦小窗）未做 —— 用户目前只能靠探针/自检触发 |
+| 表情包配图 / 余额 | 未开始（M3 后续项） |
+| 真实 provider 联调 | 需要你给一个 Key（或本机跑 Ollama）；mock 已把除"真实模型输出质量"以外的链路全部验过 |

@@ -222,6 +222,8 @@ pub fn spawn_settings_probe(app: tauri::AppHandle, action: String) {
             "delpet" => vec!["btn-del-pet-1", "btn-save"],
             // 每宠独立行为：切成"单独设置"（会自动从全局复制一份）再保存
             "ownbehaviour" => vec!["behaviour-own-0", "btn-save"],
+            // AI：填一个测试 key → 保存 → 自检（验证"密钥加密保存 + 自检"整条链路）
+            "llmkeysave" => vec!["llm-key-save", "llm-selftest"],
             _ => Vec::new(),
         };
         if sequence.is_empty() {
@@ -233,6 +235,28 @@ pub fn spawn_settings_probe(app: tauri::AppHandle, action: String) {
             eprintln!("[whale-pet][设置探针] 找不到设置窗口，注入取消");
             return;
         };
+        // "填 key 再保存"需要一个额外的输入步骤（其余动作只是点按钮）。
+        // 注意顺序：**必须先切到 AI 页**——密钥输入框与按钮只在那页上，页面没渲染出来时点它
+        // 会一直重试到放弃（实测踩过：日志说"已注入点击脚本"，其实一个元素都没找到）。
+        if action == "llmkeysave" {
+            match window.eval(&retry_click_sequence(&["nav-ai"])) {
+                Ok(()) => eprintln!("[whale-pet][设置探针] 已切到 AI 页"),
+                Err(err) => eprintln!("[whale-pet][设置探针] 切换到 AI 页失败：{err}"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            let fill = r#"(function () {
+  var input = document.getElementById('llm-key-input');
+  if (!input) return 'no-input';
+  input.value = 'sk-mock-probe-0123456789';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return 'filled';
+})()"#;
+            match window.eval(fill) {
+                Ok(()) => eprintln!("[whale-pet][设置探针] 已填入测试 key（仅用于验证加密保存）"),
+                Err(err) => eprintln!("[whale-pet][设置探针] 填入 key 失败：{err}"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
         match window.eval(&retry_click_sequence(&sequence)) {
             Ok(()) => eprintln!("[whale-pet][设置探针] 已注入点击脚本：{sequence:?}"),
             Err(err) => eprintln!("[whale-pet][设置探针] 注入点击脚本失败：{err}"),

@@ -102,6 +102,46 @@ interface AppConfig {
   pets: PetEntry[];
   animations: AnimationsConfig;
   animationWeights: AnimationWeights;
+  /** AI（M3）：**默认整段关闭**；密钥不在配置里（见 LlmStatus） */
+  llm: LlmConfig;
+}
+
+/** LLM 配置（与 Rust `LlmConfig` 同构） */
+interface LlmConfig {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  timeoutSec: number;
+  whisper: { enabled: boolean; intervalSec: number; persona: string };
+  chat: { enabled: boolean; memoryRounds: number };
+}
+
+/** `llm_status` 的返回（密钥只以打码形态出现） */
+interface LlmStatus {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  timeoutSec: number;
+  whisperEnabled: boolean;
+  whisperIntervalSec: number;
+  chatEnabled: boolean;
+  chatMemoryRounds: number;
+  persona: string;
+  hasKey: boolean;
+  keyHint: string | null;
+  keyPath: string;
+  memoryPath: string;
+  needsKey: boolean;
+}
+
+/** AI 命令的结构化失败（reason 用于分支，message 用于显示） */
+interface LlmError {
+  reason: string;
+  message: string;
 }
 
 interface SettingsDto {
@@ -129,6 +169,8 @@ let loaded = false;
 let autostart = false;
 let appDataDir = '';
 let configPath = '';
+/** AI 状态（密钥只以打码形态进来；由 `llm_status` 单独取一次） */
+let llmStatus: LlmStatus | null = null;
 /** 当前视图：`pet:<下标>` / `physics` / `animations` / `system` / `about` */
 let view = 'pet:0';
 let dirty = false;
@@ -245,6 +287,12 @@ function button(text: string, className?: string, onClick?: () => void, iconName
   return node;
 }
 
+/** 带稳定 id 的按钮：排障探针按 id 点它（见 src-tauri/src/diagnostics.rs 的设置窗口探针） */
+function idButton(id: string, text: string, onClick: () => void, iconName?: string): HTMLButtonElement {
+  const node = button(text, undefined, onClick, iconName);
+  node.id = id;
+  return node;
+}
 function textInput(value: string, onChange: (next: string) => void, withSuggestions = false, placeholder?: string): HTMLInputElement {
   const input = el('input');
   input.type = 'text';
@@ -759,8 +807,256 @@ function renderSystemPage(): HTMLElement {
   return host;
 }
 
-function renderAboutPage(): HTMLElement {
+/**
+ * AI 页（M3）。
+ *
+ * 这一页的取舍：
+ *   - **默认全部关着**，并且页面上先把"默认离线"这件事说清楚（用户不该担心桌宠偷偷联网）；
+ *   - 密钥**不进配置文件**：单独一个输入框 + 保存/清除按钮，存完只显示打码提示与文件路径；
+ *   - provider 预置了常见四家（含本地 Ollama，不需要 Key）；baseUrl / model 留空就用预置值；
+ *   - 自检按钮**真发一次请求**（用碎碎念那句提示词），成功就把模型回的话显示出来 ——
+ *     "配置对不对"必须能一键确认，而不是等 5 分钟后看宠物说没说。
+ */
+function renderAiPage(): HTMLElement {
   if (!config) throw new Error('配置尚未载入');
+  const llm = config.llm;
+  const host = el('div', 'page-inner');
+
+  const intro = card('AI 能力（可选）', '默认**完全离线**：不开这里的开关，应用不会发起任何网络请求。开启后碎碎念与对话会把你说的话发给你选择的模型服务。');
+  const toggles = el('div');
+  toggles.appendChild(
+    checkRow(llm.enabled, '启用 AI 功能', '总开关：关着时下面两项都不生效，也不会联网', (next) => {
+      llm.enabled = next;
+      markDirty();
+      render();
+    }),
+  );
+  toggles.appendChild(
+    checkRow(llm.whisper.enabled, '碎碎念', `每隔一段时间自己说一句（默认 ${llm.whisper.intervalSec} 秒）`, (next) => {
+      llm.whisper.enabled = next;
+      markDirty();
+      render();
+    }),
+  );
+  toggles.appendChild(
+    checkRow(llm.chat.enabled, '对话', '在宠物右上角的输入框里跟它说话', (next) => {
+      llm.chat.enabled = next;
+      markDirty();
+      render();
+    }),
+  );
+  intro.appendChild(toggles);
+  host.appendChild(intro);
+
+  // ---- 服务商与模型 ----
+  const service = card('服务商', 'Key 只保存在本机（DPAPI 加密），不会写进配置文件，也不会随配置一起被备份/分享。');
+  const grid = el('div', 'grid');
+  grid.appendChild(
+    field(
+      '服务商',
+      selectInput(
+        llm.provider,
+        [
+          { value: 'deepseek', label: 'DeepSeek' },
+          { value: 'openai', label: 'OpenAI' },
+          { value: 'ollama', label: 'Ollama（本机）' },
+          { value: 'custom', label: '自定义（OpenAI 兼容）' },
+        ],
+        (next) => {
+          llm.provider = next;
+          markDirty();
+          render();
+        },
+      ),
+    ),
+  );
+  grid.appendChild(
+    field('模型', textInput(llm.model, (next) => {
+      llm.model = next;
+    }), providerPlaceholder(llm.provider, 'model')),
+  );
+  grid.appendChild(
+    field('接口地址（baseUrl）', textInput(llm.baseUrl, (next) => {
+      llm.baseUrl = next;
+    }), providerPlaceholder(llm.provider, 'baseUrl')),
+  );
+  grid.appendChild(field('温度（0~2）', numberInput(llm.temperature, (next) => {
+    llm.temperature = next;
+  }, { min: 0, max: 2 })));
+  grid.appendChild(field('超时（秒）', numberInput(llm.timeoutSec, (next) => {
+    llm.timeoutSec = next;
+  }, { min: 5, max: 300 })));
+  grid.appendChild(field('碎碎念周期（秒，≥30）', numberInput(llm.whisper.intervalSec, (next) => {
+    llm.whisper.intervalSec = next;
+  }, { min: 30 })));
+  grid.appendChild(field('记忆轮数（1 轮 = 1 问 1 答）', numberInput(llm.chat.memoryRounds, (next) => {
+    llm.chat.memoryRounds = next;
+  }, { min: 0, max: 50 })));
+  service.appendChild(grid);
+
+  const personaField = field(
+    '人设（system prompt；留空用内置默认）',
+    (() => {
+      const area = el('textarea');
+      area.rows = 3;
+      area.value = llm.whisper.persona;
+      area.placeholder = llmStatus?.persona ?? '';
+      area.style.width = '100%';
+      area.style.font = 'inherit';
+      area.style.color = 'var(--text)';
+      area.style.background = 'var(--input)';
+      area.style.border = '1px solid var(--line-strong)';
+      area.style.borderRadius = '8px';
+      area.style.padding = '6px 9px';
+      area.style.resize = 'vertical';
+      area.addEventListener('input', () => {
+        llm.whisper.persona = area.value;
+        markDirty();
+      });
+      return area;
+    })(),
+  );
+  personaField.style.marginTop = '12px';
+  service.appendChild(personaField);
+  host.appendChild(service);
+
+  // ---- 密钥 ----
+  const keyCard = card('API Key', '只在点了「保存密钥」时写入本机文件，日志里只会出现打码形态。');
+  const keyRow = el('div', 'row');
+  const keyInput = el('input');
+  keyInput.type = 'password';
+  // 稳定 id：排障探针要能"填 key 并保存"（见 src-tauri/src/diagnostics.rs）
+  keyInput.id = 'llm-key-input';
+  keyInput.placeholder = llmStatus?.hasKey ? `已保存：${llmStatus.keyHint ?? ''}（输入新的可覆盖）` : 'sk-…';
+  keyInput.className = 'grow';
+  keyRow.appendChild(keyInput);
+  keyRow.appendChild(
+    idButton('llm-key-save', '保存密钥', () => {
+      const value = keyInput.value.trim();
+      if (!value) {
+        showToast('请先填入 API key');
+        return;
+      }
+      void (async () => {
+        try {
+          llmStatus = await invoke<LlmStatus>('llm_save_key', { key: value });
+          keyInput.value = '';
+          render();
+          showToast('密钥已加密保存到本机');
+          petLog('设置: API key 已保存');
+        } catch (err) {
+          setStatus('error', `保存密钥失败：${err instanceof Error ? err.message : String(err)}`);
+          petLogError('设置: 保存密钥失败', err);
+        }
+      })();
+    }),
+  );
+  keyRow.appendChild(
+    idButton('llm-key-clear', '清除密钥', () => {
+      void (async () => {
+        try {
+          llmStatus = await invoke<LlmStatus>('llm_clear_key');
+          render();
+          showToast('已清除本机保存的密钥');
+        } catch (err) {
+          setStatus('error', `清除密钥失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    }),
+  );
+  keyCard.appendChild(keyRow);
+
+  const keyInfo = el('div');
+  keyInfo.style.marginTop = '10px';
+  for (const [k, v] of [
+    ['当前状态', llmStatus?.hasKey ? `已保存（${llmStatus.keyHint ?? ''}）` : llmStatus?.needsKey ? '未保存' : '不需要（本机模型）'],
+    ['密钥文件', llmStatus?.keyPath ?? '（未知）'],
+    ['记忆文件', llmStatus?.memoryPath ?? '（未知）'],
+  ] as Array<[string, string]>) {
+    const row = el('div', 'info-row');
+    row.appendChild(el('div', 'k', k));
+    row.appendChild(el('div', 'v', v));
+    keyInfo.appendChild(row);
+  }
+  keyCard.appendChild(keyInfo);
+  host.appendChild(keyCard);
+
+  // ---- 自检与隐私 ----
+  const test = card('连通性自检', '会真发一次最小请求（就是碎碎念那句提示词），用它确认配置是否正确。');
+  const testRow = el('div', 'row-actions');
+  testRow.appendChild(
+    idButton('llm-selftest', '开始自检', () => {
+      void (async () => {
+        setStatus('', '正在自检…');
+        try {
+          const reply = await invoke<string>('llm_selftest');
+          setStatus('ok', `自检通过，模型回复：${reply}`);
+          showToast('自检通过');
+        } catch (err) {
+          const failure = err as LlmError;
+          setStatus('error', `自检失败（${failure.reason ?? 'unknown'}）：${failure.message ?? String(err)}`);
+          showToast('自检失败，见底部提示');
+        }
+      })();
+    }),
+  );
+  testRow.appendChild(
+    idButton('llm-whisper-now', '让宠物现在说一句', () => {
+      void (async () => {
+        const first = config?.pets[0];
+        if (!first) return;
+        try {
+          const label = `pet-${first.id}-0`;
+          const text = await invoke<string>('llm_whisper_now', { label, name: first.name });
+          setStatus('ok', `碎碎念已发出：${text}`);
+        } catch (err) {
+          const failure = err as LlmError;
+          setStatus('error', `碎碎念失败（${failure.reason ?? 'unknown'}）：${failure.message ?? String(err)}`);
+        }
+      })();
+    }),
+  );
+  testRow.appendChild(
+    button('清空记忆', undefined, () => {
+      void (async () => {
+        const first = config?.pets[0];
+        if (!first) return;
+        try {
+          await invoke<void>('llm_memory_clear', { petId: first.id });
+          showToast('已清空这只宠物的对话记忆');
+        } catch (err) {
+          setStatus('error', `清空记忆失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    }, 'x'),
+  );
+  test.appendChild(testRow);
+
+  const privacy = el('p', 'desc');
+  privacy.style.marginTop = '12px';
+  privacy.style.marginBottom = '0';
+  privacy.textContent =
+    '说明：默认关闭且不发任何请求；开启后只有你主动配置的服务商地址会被访问（请求由应用本体发出，页面不直接联网）；' +
+    '密钥用 Windows DPAPI 加密后存成 llm-key.bin，只有当前 Windows 用户能解开；日志里只出现打码形态。';
+  test.appendChild(privacy);
+  host.appendChild(test);
+
+  return host;
+}
+
+/** 服务商预置值提示（留空即用预置） */
+function providerPlaceholder(provider: string, what: 'model' | 'baseUrl'): string {
+  const presets: Record<string, { model: string; baseUrl: string }> = {
+    deepseek: { model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com' },
+    openai: { model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
+    ollama: { model: 'qwen2.5:7b', baseUrl: 'http://127.0.0.1:11434/v1' },
+    custom: { model: '（必填）', baseUrl: '（必填，OpenAI 兼容）' },
+  };
+  const preset = presets[provider] ?? presets.deepseek;
+  return what === 'model' ? `留空用 ${preset.model}` : `留空用 ${preset.baseUrl}`;
+}
+
+function renderAboutPage(): HTMLElement {  if (!config) throw new Error('配置尚未载入');
   const host = el('div', 'page-inner');
   const node = card('关于', 'whale-pet desktop：把上游鲸鱼桌宠做成独立的 Windows 桌面应用（Tauri v2）。');
   const logoRow = el('div', 'row');
@@ -862,6 +1158,7 @@ function renderNav(): void {
   const commons: Array<{ id: string; label: string; glyph: string }> = [
     { id: 'physics', label: '物理参数', glyph: 'sliders-horizontal' },
     { id: 'animations', label: '动画池默认值', glyph: 'clapperboard' },
+    { id: 'ai', label: 'AI（碎碎念/对话）', glyph: 'sparkles' },
     { id: 'system', label: '启动与系统', glyph: 'rocket' },
     { id: 'about', label: '关于', glyph: 'info' },
   ];
@@ -921,6 +1218,10 @@ function render(): void {
     crumbs.appendChild(el('b', undefined, '动画池默认值'));
     crumbs.appendChild(el('span', undefined, '全局'));
     page = renderAnimationsPage();
+  } else if (view === 'ai') {
+    crumbs.appendChild(el('b', undefined, 'AI 能力'));
+    crumbs.appendChild(el('span', undefined, '碎碎念 / 对话'));
+    page = renderAiPage();
   } else if (view === 'system') {
     crumbs.appendChild(el('b', undefined, '启动与系统'));
     page = renderSystemPage();
@@ -953,6 +1254,8 @@ async function load(): Promise<void> {
   try {
     const dto = await invoke<SettingsDto>('get_settings');
     config = dto.config;
+    // AI 状态单独取（密钥只以打码形态回来，不进配置）
+    llmStatus = await invoke<LlmStatus>('llm_status').catch(() => null);
     available = dto.availableAnimations;
     autostart = dto.autostart;
     configPath = dto.configPath;

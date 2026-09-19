@@ -20,6 +20,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 | `settings-physics.png` | 设置窗口 · 物理参数：四个数值 + 两个勾选行（这里的勾选行曾是"被挤成竖排文字"的 bug） |
 | `settings-animations.png` | 设置窗口 · 动画池默认值：待机/转向/拖拽/点击回应池 + 移动池 + 分类 + 权重 |
 | `settings-system.png` | 设置窗口 · 启动与系统：开机自启、文件与位置、运行方式 |
+| `settings-ai.png` | 设置窗口 · **AI（M3）**：总开关/碎碎念/对话、服务商与模型、Key 保存与自检（底部状态栏是"自检通过"的实测结果） |
 | `tray-menu.png` | 托盘菜单（浅色）：鲸鱼 logo、显示/隐藏切换项、回到初始位置、动作点播、设置、退出 |
 | `tray-menu-picker.png` | 托盘菜单 · 动作点播：**分类默认全部收起**，右侧显示每个分类的条数 |
 | `tray-menu-picker-expanded.png` | 托盘菜单 · 点开「待机」之后：只展开被点的分类，窗口自动变高 |

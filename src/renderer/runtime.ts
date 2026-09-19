@@ -18,6 +18,7 @@
  */
 import { DEFAULT_PHYSICS } from '@shared/physics.ts';
 import { anchorPixel, planMove } from '@shared/motion.ts';
+import { pick, pickSlot } from '@shared/pickers.ts';
 import type { PhysicsParams } from '@shared/types.ts';
 import { petLog, petLogError } from '../bridge/log.ts';
 import type { DisplaysSample, PetConfig, PetRuntime as PetRuntimeState, Rect, Vec2 } from '../bridge/contract.ts';
@@ -1054,6 +1055,38 @@ export class PetRuntime {
     this.chain.setPaused(true);
     this.chainPausedByInteraction = true;
     await this.playAnimation(animation, 'once');
+  }
+
+  /**
+   * 碎碎念（M3）：宿主生成的一句话 → 弹气泡 +（可选）播一条 whisper 动画。
+   *
+   * 两件事**刻意解耦**（与上游 `client/pet.ts::triggerWhisper` 一致）：
+   * 气泡是主要表现，动画是加分项——动画缺失（用户没配 `animations.events.whisper`）
+   * 也照样说话，不会因为动画池没配就把碎碎念吞掉。
+   *
+   * 气泡停留 10 秒（上游 `BUBBLE_DURATION_MS` 同值）：太短来不及看，太长像卡住了。
+   */
+  async onWhisper(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      // 空文本不该走到这里（宿主侧已经按"模型未返回文本"拦下），真到了就记一笔别静默
+      petLogError('碎碎念: 收到空文本，已忽略', null);
+      return;
+    }
+    petLog(`碎碎念: ${trimmed}`);
+    this.say(trimmed, 10_000);
+
+    // 档位有两种形状（单个名字 / 候选数组）：交给上游的 pickSlot 处理，避免自己再写一遍规则
+    const slots = this.petConfig.animations.events?.['whisper'];
+    const slot = slots && slots.length > 0 ? pick(slots) : null;
+    const animation = slot ? pickSlot(slot) : '';
+    if (!animation) return;
+    try {
+      await this.playPicked(animation);
+    } catch (err) {
+      // 动画失败不影响"已经说出来的那句话"
+      petLogError(`碎碎念: 动画 ${animation} 播放失败`, err);
+    }
   }
 
   /**
