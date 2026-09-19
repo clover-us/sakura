@@ -89,8 +89,8 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
       形状内联进代码（不引依赖、CSP 友好）
 - [x] **动作点播分类默认收起**：只列分类 + 条数，点了才展开（另有"全部展开/收起"），
       每次弹出回到全收起状态
-- [ ] 想换另一款图标候选：`cargo run --example make-icon -- --svg design/candidates/<名字>.svg`
-      （六款的对比图见 `docs/screenshots/icon-candidates.png`）
+- [x] **图标选定**（2026-09-19 用户验收）：第四款 `d-pet-peek`（长耳朵小生物趴在任务栏上，不指向物种）
+      换一款：`cargo run --example make-icon -- --svg design/candidates/<名字>.svg`
 
 **出口标准**：界面风格统一、有导航与层级；行为归属清晰（谁的动作池是谁的）。
 

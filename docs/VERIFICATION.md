@@ -1742,7 +1742,14 @@ scripts/capture-window.ps1 -TitleLike '托盘菜单'
 > 而素材是可替换的（配置里引用任意 webm），不该把图标锁死在某一种动物上。
 > 现在默认用的是**不指向物种**的 `d-pet-peek`；想换任意一款：
 > `cargo run --example make-icon -- --svg design/candidates/<名字>.svg`。
-> 六款的 256/64/32/16 对比图见 [`screenshots/icon-candidates.png`](screenshots/README.md)。
+> 六款的 256/64/32/16 对比图见 [`screenshots/icon-candidates.png`](screenshots/README.md)，
+> 图里"当前采用"的那一列下方有粉色标记线（判据是**文件内容**而不是路径——
+> 正式图标是从候选复制来的，按路径比永远标记不上）。
+
+**用户选定（2026-09-19）**：第四款 `d-pet-peek`（长耳朵小生物趴在任务栏上）。
+它本来就已经是默认（`design/app-icon.svg` 与它逐字节相同），因此**不需要再改动**——
+exe 的 `.ico`、任务栏/标题栏图标、运行时托盘图标、打包配置用的都是这一款。
+其余五款保留在 `design/candidates/` 里作为备选，换一款是一条命令的事。
 
 **证据：新图标真的进了 exe**（从二进制提取，不是"我以为嵌了"）：
 

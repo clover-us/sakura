@@ -149,8 +149,13 @@ fn write_png(path: &Path, raster: &Raster) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// 候选对比图：每个候选一列（256 放大 + 64/32/16 真实像素）
+/// 候选对比图：每个候选一列（256 放大 + 64/32/16 真实像素），
+/// "当前采用的那一款"下面画一条粉色标记线。
+///
+/// 标记的判据是**文件内容**而不是路径：正式图标是 `design/app-icon.svg`，
+/// 它是从某个候选复制过来的，按路径比永远标记不上（踩过：换成 app-icon 之后标记线消失了）。
 fn candidate_sheet(icons_dir: &Path, current: &Path) -> Result<Raster, Box<dyn std::error::Error>> {
+    let current_svg = std::fs::read_to_string(current).unwrap_or_default();
     let mut files: Vec<PathBuf> = Vec::new();
     let dir = icons_dir.join("design/candidates");
     if dir.is_dir() {
@@ -187,7 +192,7 @@ fn candidate_sheet(icons_dir: &Path, current: &Path) -> Result<Raster, Box<dyn s
             x += size + 26;
         }
         // 当前正式图标的那一款画一条粉色下划线
-        if path == current {
+        if svg == current_svg {
             let y = BIG + 120;
             for dy in 0..7 {
                 for dx in 0..70 {
