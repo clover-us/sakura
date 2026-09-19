@@ -68,9 +68,16 @@ pub fn prepare(app: &AppHandle, pet_label: &str) -> Result<(), String> {
 /// 打开某只宠物的输入框：摆到它右上角、显示、聚焦、清空上一次的输入
 pub fn open(app: &AppHandle, pet_label: &str) -> Result<(), String> {
     let label = label_for(pet_label);
+    // 按需创建这条后路（与 `bubble::show` 同样的考虑）：预建只是"点了就出现"的优化，
+    // 任何一条重建路径漏了预备，功能也不该直接失效——实测漏过一次（保存配置后对话窗没回来），
+    // 当时用户看到的是"对话窗不存在"这种内部错误。
+    if app.get_webview_window(&label).is_none() {
+        eprintln!("[whale-pet] 对话窗 {label} 不在（可能刚重建过），按需创建");
+        prepare(app, pet_label)?;
+    }
     let window = app
         .get_webview_window(&label)
-        .ok_or_else(|| format!("对话窗不存在（{label}），prepare 没跑到？"))?;
+        .ok_or_else(|| format!("对话窗 {label} 创建后仍取不到（见日志里的 WebView2 报错）"))?;
 
     if let Some(origin) = anchor_origin(app, pet_label) {
         window

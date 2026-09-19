@@ -215,13 +215,21 @@ pub fn apply_config(app: &AppHandle, next: &AppConfig) -> Result<usize, String> 
         pets.keys().cloned().collect()
     };
 
-    // ---- 4. 预备气泡窗/菜单窗 ----
+    // ---- 4. 预备气泡窗/菜单窗/对话窗 ----
+    //
+    // ⚠️ 这三行必须**成组**：拆除清单（`close_aux_windows`）会按前缀把 `bubble-` / `menu-` / `chat-`
+    // 一起销毁（它们都按宠物标签派生，宠物重建后一律作废），所以这里也要一起重建。
+    // 漏掉对话窗的那次就是这么出的 bug：保存一次配置 → 对话窗被拆掉再也没回来 →
+    // 右键「说两句…」报"对话窗不存在"（用户实测撞到，见 VERIFICATION 13.12）。
     for label in &labels {
         if let Err(err) = crate::bubble::prepare(app, label) {
             eprintln!("[whale-pet] 热重载后预备气泡窗失败 {label}：{err}");
         }
         if let Err(err) = crate::menu_window::prepare(app, label) {
             eprintln!("[whale-pet] 热重载后预备菜单窗失败 {label}：{err}");
+        }
+        if let Err(err) = crate::chat_window::prepare(app, label) {
+            eprintln!("[whale-pet] 热重载后预备对话窗失败 {label}：{err}");
         }
     }
 
