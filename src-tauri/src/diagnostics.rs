@@ -15,6 +15,9 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// `get_webview_window` 来自 Manager trait（设置窗口探针要用）
+use tauri::Manager;
+
 /// 诊断日志文件名（位于应用数据目录）
 pub const LOG_FILE_NAME: &str = "pet-debug.log";
 
@@ -159,6 +162,105 @@ pub fn spawn_synthetic_press_probe(app: tauri::AppHandle, label: String) {
                 eprintln!("[whale-pet] 合成按下探针失败：{err}");
             }
         }
+    });
+}
+
+/// 排障：`WHALE_PET_DIAG_SETTINGS=1|save|autostart` —— 设置窗口的**进程内自测**入口。
+///
+/// 为什么需要它：设置窗口平时只能靠"托盘 → 设置…"打开，而自动化环境里没有可靠的
+/// 托盘点击手段（本机的真实鼠标注入被桌面环境持续干扰，见 `VERIFICATION.md` 的说明）。
+/// 本探针走的是**与托盘完全相同的 `settings_window::open()`**、同一个页面，
+/// 最后一步用 `eval` 触发页面上的按钮（而不是直接调 Rust 命令）——
+/// 于是"页面 → 命令 → 写盘 → 重建宠物窗"整条链路都被真实走到。
+///
+///   - `=1`         只打开设置窗口（验证建窗、页面加载、get_settings）
+///   - `=save`      再点一次页面上的「保存并立即生效」
+///   - `=autostart` 再点一次页面上的「开机自启」勾选框
+///   - `=addpet`    先点「＋ 添加一只宠物」再点「保存并立即生效」（验证多开）
+///   - `=delpet`    点第二只宠物的「删除这只」再保存（验证多开减员）
+///
+/// 只在显式设置环境变量时执行，不参与正常运行路径。
+pub fn spawn_settings_probe(app: tauri::AppHandle, action: &'static str) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        eprintln!("[whale-pet][设置探针] 打开设置窗口（动作={action}）");
+        if let Err(err) = crate::settings_window::open(&app) {
+            eprintln!("[whale-pet][设置探针] 打开设置窗口失败：{err}");
+            return;
+        }
+        let sequence: &[&str] = match action {
+            "save" => &["btn-save"],
+            "autostart" => &["autostart"],
+            "addpet" => &["btn-add-pet", "btn-save"],
+            "delpet" => &["btn-del-pet-1", "btn-save"],
+            _ => &[],
+        };
+        if sequence.is_empty() {
+            return;
+        }
+        // 等页面取完配置、渲染出按钮（dev 模式下首次要转译模块，给足余量）
+        std::thread::sleep(std::time::Duration::from_millis(6000));
+        let Some(window) = app.get_webview_window(crate::settings_window::LABEL) else {
+            eprintln!("[whale-pet][设置探针] 找不到设置窗口，注入取消");
+            return;
+        };
+        match window.eval(&retry_click_sequence(sequence)) {
+            Ok(()) => eprintln!("[whale-pet][设置探针] 已注入点击脚本：{sequence:?}"),
+            Err(err) => eprintln!("[whale-pet][设置探针] 注入点击脚本失败：{err}"),
+        }
+    });
+}
+
+/// 生成"按顺序等到元素可用就点它"的脚本。
+///
+/// 为什么要等待 + 重试：页面是异步取配置的，按钮在拿到配置前是 `disabled` 的；
+/// 固定延时在慢机器上会点了个寂寞（测试误判成"功能没生效"）。
+/// 多个目标之间留 400ms：点击会触发整页重渲染，立刻找下一个元素可能拿到还没换上的旧节点。
+fn retry_click_sequence(element_ids: &[&str]) -> String {
+    let list = element_ids
+        .iter()
+        .map(|id| format!("'{id}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"(function () {{
+  var ids = [{list}];
+  var index = 0;
+  var tries = 0;
+  function step() {{
+    if (index >= ids.length) return;
+    var node = document.getElementById(ids[index]);
+    if (node && !node.hasAttribute('disabled')) {{ node.click(); index++; tries = 0; setTimeout(step, 400); return; }}
+    if (++tries < 40) setTimeout(step, 250);
+  }}
+  step();
+  return 'scheduled';
+}})()"#
+    )
+}
+
+/// 排障：`WHALE_PET_DIAG_TRAY=<菜单项 id>[,<id>…]` —— 按 id 依次走一遍托盘菜单分支。
+///
+/// 为什么需要它：托盘的**真实点击注入不了**（本机桌面环境会持续把光标挪走，
+/// M1 的合成输入自测也踩过这一点）。而"点哪个菜单项"最终都落到
+/// [`crate::tray::handle_menu_event`] 这一个函数的 match 分支上——探针直接按 id 调它，
+/// 于是"菜单项 → 动作"这一层被真实执行到，没被覆盖的只剩"muda 把系统点击派发进来"。
+///
+/// 用法示例（把显隐、回位、动作点播、设置、自启各走一遍，最后再切回自启关闭）：
+///
+/// ```text
+/// WHALE_PET_DIAG_TRAY=pet-hide-all,pet-show-all,pet-home,pet-anim:待机:待机呼吸休闲,pet-settings
+/// ```
+pub fn spawn_tray_probe(app: tauri::AppHandle, items: Vec<String>) {
+    std::thread::spawn(move || {
+        // 等窗口/页面就绪，否则"动作点播"发出去时页面还没挂上事件监听
+        std::thread::sleep(std::time::Duration::from_millis(4000));
+        for item in items {
+            eprintln!("[whale-pet][托盘探针] 触发菜单项：{item}");
+            crate::tray::handle_menu_event(&app, &item);
+            std::thread::sleep(std::time::Duration::from_millis(900));
+        }
+        eprintln!("[whale-pet][托盘探针] 全部菜单项已走完");
     });
 }
 

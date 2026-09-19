@@ -27,6 +27,12 @@ const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config/default-config.
 /// 配置文件名
 pub const CONFIG_FILE_NAME: &str = "config.jsonc";
 
+/// 保存配置前的备份文件名（每次保存前把上一版拷到这里，只保留最近一次）
+pub const CONFIG_BACKUP_FILE_NAME: &str = "config.jsonc.bak";
+
+/// 写盘用的临时文件名：先写它再原子改名，避免热重载读到"写了一半"的文件
+const CONFIG_TMP_FILE_NAME: &str = "config.jsonc.tmp";
+
 /// 动画素材目录名（位于应用数据目录下，用户可直接放自己的透明动画）
 pub const WEBM_DIR_NAME: &str = "webm";
 
@@ -91,7 +97,10 @@ pub struct MoveSpec {
     /// 动画名（对应素材目录里的文件）
     pub name: String,
     /// 覆盖参数：minDist/maxDist/margin/leadSec/tailSec 的任意子集
-    #[serde(default)]
+    ///
+    /// `skip_serializing_if`：设置窗口重写配置时不写 `"params": null`（噪音），
+    /// 缺字段由上面的 `default` 兜住，读回来仍是 `None`，语义不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
@@ -388,6 +397,119 @@ pub fn load_config(path: &Path) -> Result<AppConfig, String> {
     migrate_config(&mut config);
     config.validate()?;
     Ok(config)
+}
+
+/// 把配置序列化成**按键名排序**的规范 JSON。
+///
+/// 用途只有一个，但很关键：判断"磁盘上的配置"与"当前生效的配置"是不是同一份语义。
+///
+/// 为什么不直接比 `serde_json::to_string`：配置里的 `animations.events` 是 `HashMap`，
+/// 它的序列化顺序**每个进程、每次都不一样**（随机种子）。直接比字符串的话，
+/// "读到同一份配置"永远判为"变了"——热重载会在启动时白重建一次窗口，
+/// 而这恰好会踩到"拆窗瞬间窗口数归零 → Tauri 认为最后一个窗口关了 → 应用退出"。
+pub fn canonical_json(config: &AppConfig) -> String {
+    /// 递归按键名排序（数组保持顺序：动画池的顺序有语义）
+    fn sort(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut keys: Vec<String> = map.keys().cloned().collect();
+                keys.sort();
+                let mut sorted = serde_json::Map::new();
+                for key in keys {
+                    if let Some(inner) = map.get(&key) {
+                        sorted.insert(key.clone(), sort(inner.clone()));
+                    }
+                }
+                serde_json::Value::Object(sorted)
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.into_iter().map(sort).collect())
+            }
+            other => other,
+        }
+    }
+
+    match serde_json::to_value(config) {
+        Ok(value) => serde_json::to_string(&sort(value)).unwrap_or_default(),
+        // 理论上到不了这里（AppConfig 都是可序列化的普通结构）
+        Err(err) => {
+            eprintln!("[whale-pet] 配置序列化失败（规范 JSON）：{err}");
+            String::new()
+        }
+    }
+}
+
+/// 保存配置的结果（回给设置窗口，用来告诉用户"写到哪了、备份在哪"）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveConfigReport {
+    /// 配置文件路径
+    pub path: String,
+    /// 备份文件路径（原来没有配置文件时为 `None`）
+    pub backup: Option<String>,
+    /// 写入的字节数
+    pub bytes: usize,
+}
+
+/// 设置窗口保存配置时写在文件开头的说明。
+///
+/// 为什么要写这一段：JSON 本身不存注释，而内置模板（`config/default-config.jsonc`）
+/// 是**带大量注释**的。设置窗口把配置规范化重写之后，那些注释会消失——
+/// 与其让用户某天打开文件发现"注释没了、不知道字段啥意思"，不如在文件开头说清楚：
+/// 这份是谁写的、上一版备份在哪、手写注释会被下一次保存替换、怎么查字段含义。
+const SAVE_HEADER: &str = r#"// ============================================================================
+//  这份 config.jsonc 由「设置窗口」写入（规范化 JSON；JSON 不存注释，故本段说明之后
+//  没有字段级注释）。
+// ----------------------------------------------------------------------------
+//   - 保存前的上一版已备份为同目录下的 config.jsonc.bak（只保留最近一次）；
+//   - 字段含义速查：pets 宠物列表 / physics 抛掷物理 / animations 动画池 /
+//     animationWeights 动画链权重（idle/turn/move）；schemaVersion 目前只支持 1。
+//     带完整注释的模板见仓库 config/default-config.jsonc。
+//   - **手写编辑本文件同样生效**：应用会监听文件变化并自动热重载（约 1 秒内），
+//     无需重启；改坏了（解析/校验失败）会保留当前配置并在日志里给出原因；
+//   - 想保住手写注释：把改动写在别处、需要时手工合并，或直接改本文件后不再从
+//     设置窗口保存（保存会整体重写）。
+// ============================================================================
+"#;
+
+/// 保存配置到 `<应用数据目录>/config.jsonc`。
+///
+/// 三步，顺序不能变：
+///   1. **先校验**：宁可不写盘，也不要把一份过不了校验的配置落下去
+///      （否则下次启动直接起不来，而用户刚刚只是在界面上点了一下"保存"）；
+///   2. 备份上一版到 `config.jsonc.bak`（存在才备份）；
+///   3. 先写临时文件再原子改名——热重载线程每秒都在看这个文件，
+///      直接覆写会让它有机会读到"写了一半"的 JSON。
+pub fn save_config(app_data_dir: &Path, config: &AppConfig) -> Result<SaveConfigReport, String> {
+    config.validate()?;
+
+    let path = config_file_path(app_data_dir);
+    let backup = if path.is_file() {
+        let backup_path = app_data_dir.join(CONFIG_BACKUP_FILE_NAME);
+        fs::copy(&path, &backup_path)
+            .map_err(|e| format!("备份配置失败 {}：{e}", backup_path.display()))?;
+        Some(backup_path)
+    } else {
+        None
+    };
+
+    let body = serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败：{e}"))?;
+    let text = format!("{SAVE_HEADER}{body}\n");
+
+    let tmp_path = app_data_dir.join(CONFIG_TMP_FILE_NAME);
+    fs::write(&tmp_path, text.as_bytes())
+        .map_err(|e| format!("写入临时配置失败 {}：{e}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &path).map_err(|e| {
+        // 改名失败时留下 tmp 会让用户困惑，顺手清掉（清不掉也不影响报错信息）
+        let _ = fs::remove_file(&tmp_path);
+        format!("替换配置文件失败 {}：{e}", path.display())
+    })?;
+
+    Ok(SaveConfigReport {
+        path: path.display().to_string(),
+        backup: backup.map(|p| p.display().to_string()),
+        bytes: text.len(),
+    })
 }
 
 /// 每只宠物的待机 / 点击回应动画（**从动画池派生**，不需要逐只写配置）。

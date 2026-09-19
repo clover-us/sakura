@@ -13,6 +13,8 @@ use crate::pet_window::{self, PetRuntime};
 use crate::state::AppState;
 use crate::watchdog;
 
+use serde::Serialize;
+
 /// 取出某个宠物的运行时。
 ///
 /// **纪律（曾经违反过，代价是一次死锁）**：持锁期间只做"读账本 / 改账本"，
@@ -407,4 +409,126 @@ pub fn debug_synthetic_press<R: Runtime>(
         .eval(&script)
         .map_err(|e| format!("注入合成事件失败：{e}"))?;
     Ok(())
+}
+
+// ============================================================================
+//  设置窗口（M2）
+//
+//  设计要点：
+//    - 一次 `get_settings` 把页面需要的**全部**信息取完（配置 + 路径 + 素材清单 + 自启状态），
+//      避免"打开设置窗先发五条 IPC"这种碎片化；
+//    - 页面**不逐字段建模**：它拿到的是完整的 `AppConfig` JSON，改哪几个字段就动哪几个，
+//      其余（例如 `animations.events`）原样带回——这样 Rust 侧加字段不需要同步改前端类型；
+//    - `save_settings` 是 **async**：它要写盘 + 重建宠物窗，同步命令跑在主线程上会把
+//      事件循环堵住（建窗就是"自己等自己"，见 `show_bubble` 的说明）。
+// ============================================================================
+
+/// 设置窗口首屏要用的全部信息
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDto {
+    /// 当前生效的完整配置（前端原样持有，只改它要改的字段）
+    pub config: crate::config::AppConfig,
+    /// 配置文件路径（页面上展示 + "打开所在目录"用）
+    pub config_path: String,
+    /// 应用数据目录
+    pub app_data_dir: String,
+    /// 素材目录里可用的动画名（不含扩展名的基名，供动画池编辑器做候选）
+    pub available_animations: Vec<String>,
+    /// 开机自启的系统真实状态
+    pub autostart: bool,
+}
+
+/// 保存设置的结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSettingsDto {
+    /// 配置文件路径
+    pub path: String,
+    /// 备份路径（原来没有配置文件时为 `None`）
+    pub backup: Option<String>,
+    /// 素材警告（配置里引用了但目录里找不到的动画名）
+    pub warnings: Vec<String>,
+    /// 应用后实际存在的宠物数量
+    pub pet_count: usize,
+}
+
+/// 素材目录里的动画名（基名）
+fn available_animations(app_data_dir: &std::path::Path) -> Vec<String> {
+    pet_window::scan_webm_files(&crate::config::webm_dir(app_data_dir))
+        .iter()
+        .map(|file| pet_window::strip_extension(file))
+        .collect()
+}
+
+/// 取设置窗口所需的全部信息
+#[tauri::command]
+pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<SettingsDto, String> {
+    Ok(SettingsDto {
+        config: state.config_snapshot(),
+        config_path: crate::config::config_file_path(&state.app_data_dir).display().to_string(),
+        app_data_dir: state.app_data_dir.display().to_string(),
+        available_animations: available_animations(&state.app_data_dir),
+        autostart: crate::reload::autostart_enabled(&app),
+    })
+}
+
+/// 保存设置：校验 → 落盘（备份 + 原子写）→ **立即应用**（重建宠物窗）→ 报结果
+///
+/// 为什么"保存即生效"而不是"提示重启"：M2 的出口标准是"不碰配置文件也能完成全部常用设置"，
+/// 而"改完还要重启"会让设置窗口比手改文件更麻烦。重建一次宠物窗约几百毫秒，
+/// 用户点保存后立刻能看到新尺寸/新位置/新宠物。
+#[tauri::command]
+pub async fn save_settings(
+    app: AppHandle,
+    config: crate::config::AppConfig,
+) -> Result<SaveSettingsDto, String> {
+    // 1. 先校验：宁可不写盘，也不要把一份过不了校验的配置落下去（下次启动会直接起不来）
+    config.validate()?;
+
+    let app_data_dir = app.state::<AppState>().app_data_dir.clone();
+    let report = crate::config::save_config(&app_data_dir, &config)?;
+    // 2. 我们自己写的文件不算"外部修改"：先把热重载指纹对齐，
+    //    否则 1 秒内轮询线程会再拆一次窗（白重建一遍）
+    crate::reload::mark_stamp_current(&crate::config::config_file_path(&app_data_dir));
+
+    // 3. 素材缺失只警告不拦截（用户可能还没导入素材集，见 config::validate_animation_assets）
+    let warnings = crate::config::validate_animation_assets(&config, &available_animations(&app_data_dir));
+    for line in warnings.iter().take(10) {
+        eprintln!("[whale-pet] 设置保存警告：{line}");
+    }
+
+    // 4. 立即应用
+    let pet_count = crate::reload::apply_now(&app, &config, "设置窗口保存")?;
+    eprintln!("[whale-pet] 设置已保存：{}（{pet_count} 只宠物）", report.path);
+
+    Ok(SaveSettingsDto {
+        path: report.path,
+        backup: report.backup,
+        warnings,
+        pet_count,
+    })
+}
+
+/// 设置开机自启（返回系统真实状态；顺带同步托盘勾选）
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    crate::reload::set_autostart(&app, enabled)
+}
+
+/// 在资源管理器里选中配置文件（比"打开目录"更精确：用户一眼看到要改的是哪个文件）
+#[tauri::command]
+pub fn open_config_location(state: State<'_, AppState>) -> Result<(), String> {
+    let path = crate::config::config_file_path(&state.app_data_dir);
+    std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn()
+        .map_err(|e| format!("打开配置文件所在目录失败：{e}"))?;
+    Ok(())
+}
+
+/// 关闭设置窗口（页面上的按钮走这条命令，因此设置页不需要任何窗口权限）
+#[tauri::command]
+pub fn close_settings(app: AppHandle) -> Result<(), String> {
+    crate::settings_window::close(&app)
 }

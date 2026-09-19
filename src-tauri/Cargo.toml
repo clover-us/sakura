@@ -38,6 +38,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 自定义协议 pet:// 的路径百分号解码（中文动画文件名必需）
 percent-encoding = "2.3"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
 
 # 发行构建的体积/性能取向（对齐 Tauri 官方 size 指南）
 [profile.release]

@@ -5,13 +5,16 @@
 //!   2. 登记自定义协议为 privileged（**必须在任何窗口创建之前**，否则 webview 不认识 pet://）；
 //!   3. 建托盘；
 //!   4. 创建宠物窗口（每只一个局部小窗）；
-//!   5. 启动"光标采样 + 显示器几何"轮询线程（穿透自愈与跨屏边界的唯一来源）；
+//!   5. 启动"光标采样 + 显示器几何 + 配置热重载"轮询线程（穿透自愈与跨屏边界的唯一来源）；
 //!   6. 托管状态、注册命令。
 //!
-//! 为什么没有用 `tauri::Builder::default().run()` + 插件堆：
-//!   M0 刻意不引入任何 Tauri 插件（托盘除外），把依赖面压到最小，
-//!   先把"透明窗 / 穿透 / 跟手 / 几何"这四件真正有风险的事验证完，
-//!   再按里程碑逐个引入插件（见 docs/ROADMAP.md）。
+//! 插件策略（M0 的注释写的是"刻意不引入任何插件"，M2 按里程碑逐个加）：
+//!   - `single-instance` 必须**第一个注册**：重复启动要在建窗、读配置之前就退出，
+//!     并把已有实例的宠物显示出来（否则用户点两次图标会得到两只摸不到的幽灵宠物）；
+//!   - `autostart` 提供"开机自启"（托盘勾选项与设置窗口共用同一条 Rust API，
+//!     前端不引入对应 npm 包）。
+//!
+//! 模块划分：托盘在 `tray.rs`，配置热重载在 `reload.rs`，设置窗口在 `settings_window.rs`。
 
 // 模块可见性：对二进制冒烟程序（src/bin/logic-smoke.rs）开放，
 // 因为本机的 GNU 工具链跑不起 `cargo test` 的 libtest 可执行文件（见该文件头部说明）。
@@ -23,7 +26,10 @@ pub mod display;
 pub mod menu_window;
 pub mod model;
 pub mod pet_protocol;
+pub mod reload;
+pub mod settings_window;
 pub mod state;
+pub mod tray;
 pub mod watchdog;
 
 mod diagnostics;
@@ -33,11 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent,
-};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 
 use crate::config::{ensure_default_config, load_config};
 use crate::model::CursorSample;
@@ -64,6 +66,28 @@ const DISPLAY_POLL_MS: u64 = 1500;
 /// 应用入口
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须**第一个注册**（官方要求）：重复启动要在建窗/读配置之前就退出
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            eprintln!("[whale-pet] 检测到第二次启动：显示已有实例（不再开新进程）");
+            let handle = app.clone();
+            // 回调**不保证在主线程**上：窗口操作一律投递回主线程
+            // （与兜底命中同一条纪律，理由见 `apply_fallback_hit`）
+            if let Err(err) = app.run_on_main_thread(move || {
+                tray::show_all(&handle);
+                // 设置窗开着的话顺手提到前面——用户第二次点图标多半是想找它
+                if let Some(window) = handle.get_webview_window(settings_window::LABEL) {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }) {
+                eprintln!("[whale-pet] 单实例回调投递主线程失败：{err}");
+            }
+        }))
+        // 开机自启（Windows 上写 HKCU\...\Run；由托盘勾选项与设置窗口共用）
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         // 自定义协议登记：privileged 让它具备 fetch/stream/CORS 能力，
         // 否则 webview 会把它当成普通未知协议直接拒绝（视频无法播放）。
         .register_asynchronous_uri_scheme_protocol(pet_protocol::SCHEME, move |ctx, request, responder| {
@@ -100,13 +124,33 @@ pub fn run() {
             commands::hide_menu,
             commands::menu_action,
             commands::debug_inject_right_click,
+            // M2：设置窗口
+            commands::get_settings,
+            commands::save_settings,
+            commands::set_autostart,
+            commands::open_config_location,
+            commands::close_settings,
         ])
         .build(tauri::generate_context!())
         .expect("初始化 Tauri 应用失败")
         .run(|_app, event| {
-            // 目前不需要拦截任何运行时事件；保留此闭包以便将来处理 ExitRequested（托盘常驻时用）
-            if let RunEvent::ExitRequested { .. } = event {
-                eprintln!("[whale-pet] 应用退出");
+            // ---- 退出拦截：**只拦一种情况** ----
+            //
+            // 热重载/保存设置会"拆掉全部宠物窗 → 建新的"。拆的那一瞬间窗口数为 0，
+            // Tauri 会认为"最后一个窗口被关了"并发来 ExitRequested——如果不拦，
+            // 用户改一次配置，**应用直接退出**（实测踩过：日志里"热重载开始"之后紧跟"应用退出"）。
+            //
+            // 只在"确实正在重建"时拦：托盘的「退出」会先立 QUITTING 旗（`tray::is_quitting`），
+            // 因此正常退出不受影响；用户主动关掉设置窗也不会被拦（宠物窗还在）。
+            if let RunEvent::ExitRequested { api, .. } = event {
+                if tray::is_quitting() {
+                    eprintln!("[whale-pet] 应用退出（用户请求）");
+                } else if reload::is_applying() {
+                    api.prevent_exit();
+                    eprintln!("[whale-pet] 已拦截一次误退出：重建窗口期间窗口数瞬时归零（配置热重载/保存设置的正常现象）");
+                } else {
+                    eprintln!("[whale-pet] 应用退出");
+                }
             }
         });
 }
@@ -169,7 +213,7 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         );
 
         let state = app.state::<AppState>();
-        let config = state.config.clone();
+        let config = state.config_snapshot();
         let runtimes = pet_window::create_all(app, &config, &app_data_dir)
             .map_err(|e| format!("创建宠物窗口失败：{e}"))?;
         let count = runtimes.len();
@@ -202,7 +246,13 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // ---- 5. 托盘 ----
     build_tray(app)?;
 
-    // ---- 6. 轮询线程（光标采样 + 显示器几何） ----
+    // ---- 5.5 配置热重载的指纹基线 ----
+    // 必须在启动时对齐一次：否则第一次轮询会拿 `None` 与当前文件比，判成"被修改"
+    // （实测后果：启动 ~1 秒后白重建一次宠物窗，并顺带触发一次误退出）。
+    reload::mark_stamp_current(&config_path);
+    eprintln!("[whale-pet] 配置热重载已就绪（每 {}ms 检查一次文件变化）", reload::POLL_MS);
+
+    // ---- 6. 轮询线程（光标采样 + 显示器几何 + 配置热重载） ----
     spawn_poll_loop(app.clone());
     // ---- 6.5 主线程健康看门狗（**独立线程**：轮询线程自己也可能是被卡住的那个，见 watchdog.rs） ----
     watchdog::spawn_main_watchdog(app.clone());
@@ -224,70 +274,44 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     }
 
-    Ok(())
-}
-
-/// 构造系统托盘：快速退出 + 显示/隐藏全部宠物
-///
-/// M0 的托盘只是"能退出"的最小闭环：桌宠窗口没有标题栏，没有退出入口会让用户
-/// 只能去任务管理器结束进程。完整的托盘菜单（设置/回位/动作点播）在 M2 接入。
-fn build_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItem::with_id(app, "pet-show-all", "显示全部宠物", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "pet-hide-all", "隐藏全部宠物（点击穿透）", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "pet-quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &separator, &quit])?;
-
-    TrayIconBuilder::with_id("pet-tray")
-        .menu(&menu)
-        // 左键点击托盘不弹菜单（Windows 上更符合桌宠类工具的直觉：左键切换显隐）
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "pet-quit" => {
-                eprintln!("[whale-pet] 托盘：退出");
-                app.exit(0);
-            }
-            "pet-show-all" => toggle_all_pets(app, true),
-            "pet-hide-all" => toggle_all_pets(app, false),
-            other => eprintln!("[whale-pet] 未处理的托盘菜单项：{other}"),
-        })
-        .on_tray_icon_event(|tray, event| {
-            // 左键单击：全部显示（"宠物不见了"是最常见的求助场景，给一个一键找回入口）
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                toggle_all_pets(tray.app_handle(), true);
-            }
-        })
-        .build(app)?;
-    Ok(())
-}
-
-/// 显示/隐藏全部宠物窗口（隐藏时同时打开穿透，避免不可见窗口吃掉鼠标事件）
-fn toggle_all_pets(app: &AppHandle, visible: bool) {
-    let state = app.state::<AppState>();
-    let Ok(pets) = state.pets.lock() else {
-        eprintln!("[whale-pet] 宠物窗口表锁已被污染，忽略托盘操作");
-        return;
+    // ---- 7b. 设置窗口探针（`WHALE_PET_DIAG_SETTINGS=1|save|autostart|addpet|delpet`，见 diagnostics）----
+    let settings_probe = match std::env::var("WHALE_PET_DIAG_SETTINGS").as_deref() {
+        Ok("save") => Some("save"),
+        Ok("autostart") => Some("autostart"),
+        Ok("addpet") => Some("addpet"),
+        Ok("delpet") => Some("delpet"),
+        Ok("1") => Some("1"),
+        _ => None,
     };
-    for (label, runtime) in pets.iter() {
-        let result = if visible {
-            runtime.window.show()
-        } else {
-            runtime.window.hide()
-        };
-        if let Err(err) = result {
-            eprintln!("[whale-pet] 切换窗口显隐失败 {label}：{err}");
+    if let Some(action) = settings_probe {
+        eprintln!("[whale-pet] 启用设置窗口探针（动作={action}）");
+        diagnostics::spawn_settings_probe(app.clone(), action);
+    }
+
+    // ---- 7c. 托盘探针（`WHALE_PET_DIAG_TRAY=pet-hide-all,pet-home,…`，见 diagnostics）----
+    if let Ok(sequence) = std::env::var("WHALE_PET_DIAG_TRAY") {
+        let items: Vec<String> =
+            sequence.split(',').map(|item| item.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if !items.is_empty() {
+            eprintln!("[whale-pet] 启用托盘探针：{} 个菜单项", items.len());
+            diagnostics::spawn_tray_probe(app.clone(), items);
         }
     }
+
+    Ok(())
 }
 
-/// 启动轮询线程：光标采样（穿透自愈 + 拖拽兜底）与显示器几何变化检测。
+/// 构造系统托盘（M2 完整版：显隐 / 回位 / 动作点播 / 自启 / 设置 / 退出）。
 ///
-/// 为什么这两件事共用一个线程：
+/// 实现全在 [`crate::tray`]：那里同时说明了"动作点播为什么复用右键菜单那条通道"
+/// 与"持锁期间为什么绝不能动窗口"两条约定。
+fn build_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    tray::build(app)
+}
+
+/// 启动轮询线程：光标采样（穿透自愈 + 拖拽兜底）、显示器几何变化检测、配置热重载。
+///
+/// 为什么这三件事共用一个线程：
 ///   它们都是"低频、必须与 UI 线程解耦"的周期任务，且都需要 AppHandle。
 ///   合并后只有一个线程与一个停止标志，生命周期管理简单；50ms 的单次成本也远低于
 ///   线程切换开销。
@@ -302,6 +326,7 @@ fn spawn_poll_loop(app: AppHandle) {
 
     std::thread::spawn(move || {
         let mut last_display_check = Instant::now();
+        let mut last_config_check = Instant::now();
         // 上一帧的左键状态：用来识别"按下的那一瞬间"（菜单的"点外面关掉"靠它）
         let mut prev_primary_down = false;
         while running.load(Ordering::Relaxed) {
@@ -352,6 +377,14 @@ fn spawn_poll_loop(app: AppHandle) {
                     }
                     Err(err) => eprintln!("[whale-pet] 读取显示器几何失败：{err}"),
                 }
+            }
+
+            // ---- 配置热重载 ----
+            // 这里**只做发现**：解析 + 比对指纹很便宜（毫秒级），而"重建窗口"是重活，
+            // 由 `reload` 起独立工作线程去做，绝不压在轮询线程上（见 reload.rs 的模块注释）。
+            if now.duration_since(last_config_check) >= Duration::from_millis(reload::POLL_MS) {
+                last_config_check = now;
+                reload::poll(&app);
             }
 
             std::thread::sleep(Duration::from_millis(CURSOR_POLL_MS));

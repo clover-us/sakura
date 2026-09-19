@@ -13,7 +13,8 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://pet.localhost pet:; media-src 'self' blob: http://pet.localhost pet:; font-src 'self' data: http://pet.localhost pet:; connect-src 'self' ipc: http://ipc.localhost http://pet.localhost pet:; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://pet.localhost pet:; media-src 'self' blob: http://pet.localhost pet:; font-src 'self' data: http://pet.localhost pet:; connect-src 'self' ipc: http://ipc.localhost http://pet.localhost pet: ws://127.0.0.1:1420 http://127.0.0.1:1420; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {

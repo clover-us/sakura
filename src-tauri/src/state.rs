@@ -15,8 +15,13 @@ use crate::pet_window::PetRuntime;
 
 /// 应用状态（由 Tauri 托管，命令与轮询线程共享）
 pub struct AppState {
-    /// 已加载的配置（M0 不支持热重载：重启生效）
-    pub config: AppConfig,
+    /// 当前生效的配置。
+    ///
+    /// M0/M1 它是普通字段（改配置=重启）；M2 起放进 `Mutex`，
+    /// 因为"设置窗口保存"与"配置文件被外部改动"两条路都要**在运行期换掉它**。
+    /// 字段本身不公开：读取一律走 [`AppState::config_snapshot`]，替换走 [`AppState::set_config`]，
+    /// 这样"拿了配置就出锁"这条纪律不需要每处调用方自己记得。
+    config: Mutex<AppConfig>,
     /// 应用数据目录（配置与素材都在这下面）
     pub app_data_dir: PathBuf,
     /// 宠物窗口表：标签 → 运行时
@@ -31,11 +36,30 @@ impl AppState {
     /// 新建状态
     pub fn new(config: AppConfig, app_data_dir: PathBuf) -> Self {
         Self {
-            config,
+            config: Mutex::new(config),
             app_data_dir,
             pets: Mutex::new(HashMap::new()),
             displays: Mutex::new(None),
             displays_fingerprint: Mutex::new(String::new()),
+        }
+    }
+
+    /// 取当前生效配置的**副本**（拿完就出锁，调用方可以放心去做窗口操作）
+    pub fn config_snapshot(&self) -> AppConfig {
+        match self.config.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// 换上一份新配置（设置窗口保存 / 配置文件热重载）。
+    ///
+    /// 注意：本函数**只换账本**，不碰任何窗口——重建窗口是调用方（`reload::apply_config`）的事，
+    /// 顺序必须是"先换账本、再按新账本建窗"，反过来新建的窗口会按旧账本初始化。
+    pub fn set_config(&self, next: AppConfig) {
+        match self.config.lock() {
+            Ok(mut guard) => *guard = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
         }
     }
 

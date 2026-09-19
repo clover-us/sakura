@@ -8,7 +8,7 @@
 
 ---
 
-## 一、当前进度（M0 技术验证：已完成）
+## 一、当前进度（M0 / M1 已完成，M2 已完成）
 
 M0 的目标是验证"Tauri 能不能把这套桌宠跑起来"这条链路上所有**有风险的环节**。
 下表全部是在本机**实跑验证**的结果（验证方式见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md)）：
@@ -31,11 +31,32 @@ M0 的目标是验证"Tauri 能不能把这套桌宠跑起来"这条链路上所
 | **逐帧窗口跟随** | ✅ | 前端计数 **63.3 次/秒**（≈刷新率）；进程外 160ms 采样到 **77 个不同位置**、尺寸恒为 `840×656` |
 | **多显示器几何（工作区/面板）** | ✅ | 工作区 `2560×1392` vs 面板 `2560×1440`（含 48px 任务栏），按序成对下发并启动期校验 |
 | 配置读取 / 校验 / 默认配置释放 | ✅ | 首次运行自动释放 `config.jsonc` + 2 条示例动画 |
-| 纯逻辑冒烟（38 项断言） | ✅ | `cargo run --bin logic-smoke` → 通过 38、失败 0 |
+| 纯逻辑冒烟（51 项断言） | ✅ | `cargo run --bin logic-smoke` → 通过 51、失败 0（含 M2 的配置写回路径） |
 
-**尚未实现**（按里程碑排期，见 [`docs/ROADMAP.md`](docs/ROADMAP.md)）：
-完整动画链与随机动作、左右转向、屏幕漫游、多宠物与跨窗碰撞、右键级联菜单、点击积分、
-设置窗口与托盘完整菜单、碎碎念/对话（LLM）、余额、打包安装包。
+### M1「宠物本体补齐」已完成
+
+完整动画链与随机动作分类、素材导入（106 条）、左右转向与镜像、屏幕漫游、右键级联菜单、
+气泡独立小窗、角落定位语义统一，以及三轮真机 bug 修复（持锁跨线程动窗口导致死锁、
+输入状态机两处真 bug、"跟手太松"的弹簧滞后从 0.15s 压到 0.082s）。
+**用户真机验收："可以，当前版本很丝滑。"** 复盘见 `VERIFICATION.md` 6.6 ~ 6.8。
+
+### M2「像个正经应用」已完成
+
+| 能力 | 说明 |
+| --- | --- |
+| 托盘完整菜单 | 显示/隐藏、回到初始位置、动作点播（按分类级联）、开机自启、设置、退出 |
+| 设置窗口 | 独立普通窗口：宠物增删、名称/ID/尺寸/角落/边距、物理参数、动画池与权重；**保存即生效** |
+| 单实例锁 | 重复启动不再开第二份，而是显示已有实例 |
+| 开机自启 | 托盘勾选项与设置窗口共用；状态直接读系统 |
+| 配置热重载 | 外部改 `config.jsonc` 约 1 秒内生效（改坏了保留当前配置并在日志里说明原因） |
+| CSP 收紧 | `csp` + `devCsp` 落地，并在 **release 二进制**上回归过透明动画与 IPC |
+
+> 注意：从设置窗口保存会**整体重写**配置文件（JSON 不存注释），文件开头会写明这一点，
+> 上一版会备份成 `config.jsonc.bak`。想保留手写注释就别从界面保存。
+
+**尚未实现**（见 [`docs/ROADMAP.md`](docs/ROADMAP.md)）：
+多宠物跨窗碰撞、点击积分、高 DPI 与多显示器观感回归、从 dsh-pet 一键导入、
+LLM 能力（碎碎念/对话/表情包/余额）、安装包产出。
 
 ---
 
@@ -101,7 +122,7 @@ pwsh -File scripts\import-animations.ps1
 
 ```powershell
 cd src-tauri
-cargo run --bin logic-smoke      # 33 项断言：配置解析/校验、路径防穿越、JSONC 注释、几何换算
+cargo run --bin logic-smoke      # 51 项断言：配置解析/校验/写回、路径防穿越、JSONC 注释、几何换算
 ```
 
 ---
@@ -113,6 +134,7 @@ cargo run --bin logic-smoke      # 33 项断言：配置解析/校验、路径�
 | 文件 | 说明 |
 | --- | --- |
 | `config.jsonc` | 主配置（支持 `//` 与 `/* */` 注释）。首次运行自动生成，**绝不覆盖你的改动** |
+| `config.jsonc.bak` | 设置窗口每次保存前自动备份的上一版（只留最近一次） |
 | `webm/` | 动画素材目录。放入 `.webm`（VP9-alpha）即可在配置里引用 |
 | `pet-debug.log` | 诊断日志（见下） |
 
@@ -131,10 +153,12 @@ cargo run --bin logic-smoke      # 33 项断言：配置解析/校验、路径�
 }
 ```
 
-- `pets` 数组**每一项 = 一个独立的透明置顶窗口**（多开就多写几项，`id` 必须唯一）
+- `pets` 数组**每一项 = 一个独立的透明置顶窗口**（多开就多写几项，`id` 必须唯一；也可以在设置窗口里增删）
 - `idle` / `click` 留空字符串 = 自动挑选目录里排序最靠前的动画
 - 任何字段缺失或非法都会**明确报错**（控制台打印文件完整路径），不做静默兜底
-- 改完配置**重启应用**生效（M0 尚未做热重载）
+- **改完配置不用重启**：应用每 1 秒比对文件指纹，变化就热重载（拆掉旧窗、按新配置重建）；
+  改坏了（解析/校验失败）会保留当前配置继续跑，把原因写进日志。改动画池之后托盘的"动作点播"也会跟着重建
+- 从**设置窗口**保存会整体重写该文件（JSON 不存注释），详见上文 M2 的提示
 
 ### 诊断日志
 
@@ -156,8 +180,19 @@ $env:WHALE_PET_AUTOTEST = '1'; pnpm tauri dev   # 拖拽 + 甩抛全链路（弹
 $env:WHALE_PET_AUTOTEST = '2'; pnpm tauri dev   # "拖到命中区外松手"的失控场景（松手事件丢失的自愈）
 ```
 
+M2 又加了两组**走真实代码路径**的探针（自动化验证用，默认不启用）：
+
+```powershell
+# 设置窗口：打开同一个 settings_window::open()，再由页面自己点按钮（页面 → 命令 → 写盘 → 重建）
+$env:WHALE_PET_DIAG_SETTINGS = 'save'          # 1 | save | autostart | addpet | delpet
+# 托盘：按 id 走一遍托盘菜单的 match 分支（真实托盘点击注不进去，见 VERIFICATION 9.9）
+$env:WHALE_PET_DIAG_TRAY = 'pet-hide-all,pet-show-all,pet-home,pet-settings'
+pnpm tauri dev
+```
+
 两个钩子都只用合成采样驱动**与真实输入同一条代码路径**，不改变业务语义；
-`autotest=2` 的场景与结果见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 第 6.4 节。
+`autotest=2` 的场景与结果见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 第 6.4 节，
+M2 探针的证据见第 9 节。
 
 ---
 
@@ -166,8 +201,12 @@ $env:WHALE_PET_AUTOTEST = '2'; pnpm tauri dev   # "拖到命中区外松手"的�
 ```
 .
 ├─ index.html                    桌宠窗口页面（透明布局 + 双缓冲 video + 命中区）
+├─ bubble.html / menu.html       气泡窗 / 右键菜单窗页面（都是独立小窗）
+├─ settings.html                 设置窗口页面（普通窗口，M2）
 ├─ src/
 │  ├─ main.ts                    入口：取配置 → 建通道 → 装配运行时
+│  ├─ settings-page.ts           设置页逻辑：整份配置进出，改哪几个字段就动哪几个（M2）
+│  ├─ menu-page.ts               菜单页逻辑：上游菜单树 + 桌面端本地工具项
 │  ├─ bridge/
 │  │  ├─ tauri.ts                window.__TAURI__ 的唯一访问点（含类型声明）
 │  │  ├─ contract.ts             Rust ↔ 前端 数据契约（与 model.rs 一一对应）
@@ -183,22 +222,26 @@ $env:WHALE_PET_AUTOTEST = '2'; pnpm tauri dev   # "拖到命中区外松手"的�
 │     └─ dom.ts                  最小 DOM 工具 + 大声报错
 ├─ src-tauri/
 │  ├─ src/
-│  │  ├─ lib.rs                  启动装配：协议 → 配置 → 几何 → 窗口 → 托盘 → 轮询线程
-│  │  ├─ main.rs                 二进制入口
+│  │  ├─ lib.rs                  启动装配：插件 → 协议 → 配置 → 几何 → 窗口 → 托盘 → 轮询线程
+│  │  ├─ main.rs                 二进制入口（release 隐藏控制台）
 │  │  ├─ pet_window.rs           窗口创建/定位/移动/穿透翻转（每宠一个局部小窗）
+│  │  ├─ tray.rs                 托盘菜单与它的动作分发（M2）
+│  │  ├─ settings_window.rs      设置窗口的建/显/关（普通窗口，M2）
+│  │  ├─ reload.rs               配置热重载与"保存即生效"（拆窗重建 + 托盘重建，M2）
 │  │  ├─ pet_protocol.rs         自定义协议 pet://（提供动画/字体等本地素材）
 │  │  ├─ display.rs              显示器几何 + 变化轮询（并集，不是外接矩形）
-│  │  ├─ config.rs               配置读取/校验/JSONC 注释剥离/首次运行落默认
+│  │  ├─ config.rs               配置读取/校验/JSONC 注释剥离/写回（M2）
 │  │  ├─ model.rs                数据契约（与 contract.ts 一一对应）
-│  │  ├─ commands.rs             前端可调用的命令
-│  │  ├─ state.rs                共享状态
-│  │  ├─ diagnostics.rs          诊断日志落盘
-│  │  └─ bin/logic-smoke.rs      纯逻辑冒烟检查（33 项断言）
-│  └─ capabilities/default.json  最小权限集（只有事件通道）
+│  │  ├─ commands.rs             前端可调用的命令（含 M2 的设置读写）
+│  │  ├─ state.rs                共享状态（配置可在运行期替换）
+│  │  ├─ watchdog.rs             取锁/窗口操作计时 + 主线程健康看门狗
+│  │  ├─ diagnostics.rs          诊断日志落盘 + 受控自测/探针入口
+│  │  └─ bin/logic-smoke.rs      纯逻辑冒烟检查（51 项断言）
+│  └─ capabilities/default.json  最小权限集（宠物/气泡/菜单/设置四类窗口）
 ├─ reference/shared/             ← 从上游逐字节拷贝的纯逻辑（**零改动**）
 ├─ config/default-config.jsonc   默认配置模板（编译进 exe，首次运行释放）
 ├─ assets/webm/                  内置示例动画（编译进 exe）
-├─ scripts/                      环境激活、素材导入
+├─ scripts/                      环境激活、素材导入、窗口探针
 └─ docs/                         拷贝清单、验证记录、路线图、Tauri 配置说明
 ```
 
@@ -279,20 +322,35 @@ $env:WHALE_PET_AUTOTEST = '2'; pnpm tauri dev   # "拖到命中区外松手"的�
 11. **配置错误大声报错，绝不静默兜底**
     读不到/不合法就报错并在页面显示红条；素材缺失时窗口照建（否则用户连错误都看不到）。
 
+12. **运行期改配置 = 拆窗重建，不做"就地改参数"**（`reload.rs::apply_config`）
+    配置能表达"多一只/少一只"，就地改参数无法覆盖这种结构变化；统一走一条路径，
+    就不会出现"窗口还是旧的、账本已经是新的"这种半新半旧状态（代价是一次几百毫秒的重建）。
+
+13. **拆窗那一刻必须拦住退出**（`lib.rs` 的 `run` 闭包）
+    拆完旧窗、新窗未建的一瞬间窗口数为 0，Tauri 会当成"最后一个窗口被关闭"而退出整个应用。
+    只在"正在应用新配置"时 `prevent_exit()`；而托盘的"退出"要先立旗——
+    因为 `AppHandle::exit()` **也**会走 `ExitRequested`，否则会变成"点退出退不掉"（真踩过）。
+
+14. **设置窗口保存会重写整个配置文件**（`config.rs::save_config`）
+    JSON 不存注释，而模板是带注释的；因此采用"备份上一版 + 文件开头写说明段"，
+    并让"手工编辑 → 热重载"这条路继续可用。取舍理由见 `VERIFICATION.md` 9.4。
+
 ---
 
 ## 六、已知限制
 
 | 限制 | 说明 | 计划 |
 | --- | --- | --- |
-| 本机无法产出安装包 | 沙箱无 HTTPS，下载不了 NSIS/WiX；用 `--no-bundle` 出 exe | 在能联网的机器上直接出包 |
+| 本机无法产出安装包 | 沙箱里只有 cargo 的 crates 通道能通，Tauri CLI 下载打包器（NSIS/WiX）不通。`cargo build --release` 的二进制已实跑（含生产 CSP） | 在能联网的机器上直接出包 |
 | `cargo test` 跑不起来 | GNU 工具链下 libtest 可执行文件被加载器拒绝（`0xC0000139`，导入表与主程序一致，属环境问题）。改用 `cargo run --bin logic-smoke` | 换 MSVC 工具链或在正常环境跑 |
 | 仅 Windows | 透明窗/穿透/DPI 都按 Windows 验证 | macOS 需 `.mov` 素材 + 签名公证；Linux 合成器差异大 |
 | 多显示器跨屏抛掷未做观感回归 | 本机只有一块屏（几何/校验/放行逻辑已就位） | 需双屏机器回归一次 |
-| 单只宠物 | 多宠物、跨窗碰撞属 M1 | 见 ROADMAP |
-| 无右键菜单 | M1 | 上游 `shared/menu.ts` 可复用 |
+| 高 DPI 未做观感回归 | 本机 DPR=1（100%） | 需 125%/150% 的机器各跑一次 |
+| 托盘图标的真实点击未被自动化 | 本机鼠标注入不可靠，验证覆盖到"菜单项 → 动作"这一层为止 | 见 `VERIFICATION.md` 9.9 |
+| 无跨窗碰撞 | 多宠物可开（设置窗口可增删），但宠物之间不碰撞（`petCollision` 目前是占位开关） | M1 遗留项，见 ROADMAP |
+| 无点击积分 | 飞行中被按下的粒子与积分卡未做 | M1 遗留项 |
 | 无 LLM 能力 | 碎碎念/对话属 M3 | 需要自带 provider（OpenAI 兼容/DeepSeek/Ollama） |
-| CSP 未收紧 | `tauri.conf.json` 里为 `null` | 发布前按 `docs/TAURI-CONFIG.md` 收紧并回归 |
+| 从 dsh-pet 一键导入未做 | 素材导入已有 `scripts/import-animations.ps1`，设置窗口里的一键入口未做 | M2 遗留项 |
 
 ---
 

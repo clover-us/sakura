@@ -234,6 +234,93 @@ fn main() {
     };
     check("主屏尺寸为 0 被拒绝", validate_geometry(&zero_primary).is_err(), "零尺寸主屏未被检出");
 
+    // ---- 10. 保存配置（设置窗口的写盘路径） ----
+    //
+    // 这一段是 M2 新增的"设置窗口 → 写盘 → 读回"闭环中**可以纯逻辑验证**的部分：
+    // 校验先于写盘、备份上一版、原子写、带注释头的文件仍能被 load_config 读回，
+    // 以及"设置窗口重写一遍不会改变配置语义"（Round-trip 稳定）。
+    println!("\n[10] 保存配置（设置窗口写盘路径）");
+    {
+        use whale_pet_desktop_lib::config::{
+            config_file_path, load_config as load, migrate_config, save_config,
+        };
+
+        let dir = std::env::temp_dir().join("whale-pet-smoke-save");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = config_file_path(&dir);
+
+        // ① 先落一份模板（模拟"用户当前的配置"），再调 save_config 覆盖它。
+        //    注意先过一遍 `migrate_config`：加载路径会做一次性的结构迁移
+        //    （清空旧版 `pets[].idle/click`），拿"迁移前"的模板去比 round-trip
+        //    必然不相等——这不是 bug，比的是两个不同的阶段。
+        let mut template_config: AppConfig = serde_json::from_str(&strip(&template)).expect("模板应可解析");
+        migrate_config(&mut template_config);
+        let _ = std::fs::write(&path, &template);
+
+        match save_config(&dir, &template_config) {
+            Ok(report) => {
+                check("save_config 返回写入路径", report.path == path.display().to_string(), &report.path);
+                check("首次保存没有备份（原来没有文件才不备份）", report.backup.is_some(), "模板已存在，应当备份上一版");
+                check("写入字节数非零", report.bytes > 0, &report.bytes.to_string());
+
+                // ② 读回：写出去的是"规范化 JSON + 注释头"，load_config 必须能原样吃下
+                match load(&path) {
+                    Ok(reloaded) => {
+                        check("保存后的文件可被 load_config 读回", true, "");
+                        let same = canonical(&template_config) == canonical(&reloaded);
+                        check("读回的配置与保存前语义一致", same, "round-trip 后配置变了");
+                        check("保存后的文件带说明注释头", std::fs::read_to_string(&path).map(|t| t.starts_with("// ==")).unwrap_or(false), "文件开头没有说明段");
+                        // 再存一轮：迁移是幂等的，因此这一轮必须**逐字节同义**
+                        // （否则"用户每点一次保存，配置就悄悄漂一点"）
+                        if save_config(&dir, &reloaded).is_ok() {
+                            let again = load(&path).map(|c| canonical(&c)).unwrap_or_default();
+                            check("连续两次 round-trip 完全稳定（迁移幂等）", again == canonical(&reloaded), "第二次 round-trip 又变了");
+                        } else {
+                            check("再次保存成功", false, "第二轮 save_config 失败");
+                        }
+                    }
+                    Err(err) => check("保存后的文件可被 load_config 读回", false, &err),
+                }
+
+                // ③ 改动一处再存：备份文件应当等于"改动前"的那一版
+                let mut edited = template_config.clone();
+                if let Some(pet) = edited.pets.first_mut() {
+                    pet.size = 640.0;
+                }
+                match save_config(&dir, &edited) {
+                    Ok(second) => {
+                        check("第二次保存仍返回备份路径", second.backup.is_some(), "备份路径为空");
+                        let backup_text = std::fs::read_to_string(dir.join(whale_pet_desktop_lib::config::CONFIG_BACKUP_FILE_NAME)).unwrap_or_default();
+                        let backup_config = serde_json::from_str::<AppConfig>(&strip(&backup_text));
+                        check(
+                            "备份里是上一版（改动前的 size）",
+                            backup_config.map(|c| c.pets.first().map(|p| (p.size - 420.0).abs() < f64::EPSILON).unwrap_or(false)).unwrap_or(false),
+                            "备份内容不是改动前的那一版",
+                        );
+                        let current = load(&path).map(|c| c.pets.first().map(|p| (p.size - 640.0).abs() < f64::EPSILON).unwrap_or(false)).unwrap_or(false);
+                        check("当前文件是新版（改动后的 size）", current, "当前文件没写进新值");
+                    }
+                    Err(err) => check("第二次保存成功", false, &err),
+                }
+
+                // ④ 校验失败时**一个字节都不该写**（用户点保存不能把配置改成起不来的样子）
+                let before = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut broken = edited.clone();
+                if let Some(pet) = broken.pets.first_mut() {
+                    pet.size = 10.0; // 低于下限 64
+                }
+                let rejected = save_config(&dir, &broken).is_err();
+                let after = std::fs::read_to_string(&path).unwrap_or_default();
+                check("非法配置被 save_config 拒绝", rejected, "越界配置竟然写成功了");
+                check("被拒绝时配置文件未被改动", before == after, "文件被写坏了");
+            }
+            Err(err) => check("save_config 成功", false, &err),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // ---- 汇总 ----
     // SAFETY: 单线程
     let (passed, failed) = unsafe { (PASSED, FAILED) };
@@ -241,6 +328,14 @@ fn main() {
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+/// 规范化 JSON：递归按键名排序后序列化。
+///
+/// 实现已挪到 `config::canonical_json`（热重载判定"配置有没有真的变"也用同一份），
+/// 冒烟程序直接复用，避免两处实现逐渐不一致。
+fn canonical(config: &AppConfig) -> String {
+    whale_pet_desktop_lib::config::canonical_json(config)
 }
 
 /// 本地复刻 config.rs 里的注释剥离（那边是私有函数，冒烟程序只验证行为一致即可）

@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>whale-pet 设置</title>
+    <style>
+      /*
+       * 设置窗口的样式（与桌宠那三个窗口完全无关：这是个普通界面）。
+       *
+       * 约定：
+       *   - 不透明深色底：设置窗是"正经窗口"，走系统边框与任务栏，不需要透明；
+       *   - 不做圆角/自绘标题栏：系统的最大化/最小化/关闭按钮必须原样可用；
+       *   - 尺寸自适应：窗口可缩放，内容区滚动（min-width 720 由宿主设了 min_inner_size）。
+       */
+      :root {
+        --bg: #1b1d22;
+        --panel: #24262c;
+        --panel-2: #2b2e35;
+        --line: #383b44;
+        --text: #e7e9ee;
+        --muted: #9aa1ad;
+        --accent: #58a6ff;
+        --accent-weak: #2b4a6f;
+        --danger: #ff7b72;
+        --warn: #f0c674;
+        --ok: #7ee787;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.6 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ---- 顶部条 ---- */
+      header {
+        flex: none;
+        padding: 14px 18px 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .title-row {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .path {
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+      .toolbar {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      /* ---- 主体 ---- */
+      main {
+        flex: 1;
+        overflow: auto;
+        padding: 16px 18px 24px;
+      }
+      section {
+        margin-bottom: 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px 16px 16px;
+      }
+      section > h2 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0 0 12px;
+      }
+
+      /* ---- 表单元件 ---- */
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 12px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button.primary {
+        background: var(--accent-weak);
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      button.icon {
+        padding: 3px 8px;
+        color: var(--muted);
+      }
+      button.icon:hover {
+        color: var(--danger);
+        border-color: var(--danger);
+      }
+      input[type='text'],
+      input[type='number'],
+      select {
+        font: inherit;
+        color: var(--text);
+        background: #1d1f24;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 4px 8px;
+        width: 100%;
+      }
+      input:focus,
+      select:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      input[type='checkbox'] {
+        width: auto;
+        accent-color: var(--accent);
+      }
+      label.field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      label.field > span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      label.check {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 16px;
+      }
+
+      /* ---- 宠物卡片 ---- */
+      .pet-card {
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .pet-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .pet-head strong {
+        font-size: 13px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px 12px;
+      }
+
+      /* ---- 列表编辑器 ---- */
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .row > .grow {
+        flex: 1;
+      }
+      .row > .num {
+        width: 84px;
+        flex: none;
+      }
+      .list-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 14px 0 6px;
+      }
+      .list-head > strong {
+        font-size: 13px;
+      }
+      .cat {
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+      }
+
+      /* ---- 状态条 ---- */
+      footer {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 18px;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+      }
+      #status {
+        flex: 1;
+        font-size: 12px;
+        color: var(--muted);
+        max-height: 96px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      #status.ok {
+        color: var(--ok);
+      }
+      #status.error {
+        color: var(--danger);
+      }
+      #status.warn {
+        color: var(--warn);
+      }
+      .dirty-dot {
+        display: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--warn);
+      }
+      body.dirty .dirty-dot {
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="title-row">
+        <h1>whale-pet 设置</h1>
+        <span class="dirty-dot" title="有未保存的改动"></span>
+      </div>
+      <div class="path" id="config-path">配置文件：读取中…</div>
+      <div class="toolbar">
+        <button id="btn-open-file" type="button">打开配置文件所在目录</button>
+        <button id="btn-reload" type="button">放弃改动并重新载入</button>
+        <button id="btn-close" type="button">关闭窗口</button>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>宠物</h2>
+        <p class="hint">
+          每只宠物一个独立小窗。尺寸是包围盒宽度（高度按 9:16 推出），角落与边距决定它启动时的落点；
+          「回到初始位置」用的是同一套语义。改完点右下角「保存并立即生效」。
+        </p>
+        <div id="pets"></div>
+        <button id="btn-add-pet" type="button">＋ 添加一只宠物</button>
+      </section>
+
+      <section>
+        <h2>拖拽与抛掷物理</h2>
+        <p class="hint">这几项对所有宠物生效（与上游 dsh-pet 的物理参数同一套语义）。</p>
+        <div class="grid" id="physics"></div>
+      </section>
+
+      <section>
+        <h2>动画池</h2>
+        <p class="hint">
+          下拉候选来自素材目录里实际存在的动画（不含扩展名的名字）。名字写错不会让应用起不来，
+          保存时会以「警告」形式列出找不到素材的名字。
+        </p>
+        <div id="pools"></div>
+
+        <div class="list-head"><strong>动画链权重（idle / turn / move）</strong></div>
+        <p class="hint">三者之和 + 各随机分类的 weight 之和应当等于 100。</p>
+        <div class="grid" id="weights"></div>
+
+        <div class="list-head"><strong>随机动作分类</strong></div>
+        <p class="hint">weight 是出现权重；「带文字、镜像会颠倒」的分类勾上 noMirror。</p>
+        <div id="categories"></div>
+        <button id="btn-add-category" type="button">＋ 添加分类</button>
+
+        <div class="list-head"><strong>移动池（moves）</strong></div>
+        <p class="hint">
+          这里只编辑动作名列表；每个动作的参数覆盖（params）保持配置文件里的原值
+          ——需要细调请用上面的「打开配置文件所在目录」直接改文件（改完会自动热重载）。
+        </p>
+        <div id="moves"></div>
+      </section>
+
+      <section>
+        <h2>开机自启</h2>
+        <p class="hint">写入当前用户的启动项（不需要管理员权限）。这一项**立即生效**，不经过「保存」。</p>
+        <label class="check"><input type="checkbox" id="autostart" /> 开机时自动启动 whale-pet</label>
+      </section>
+    </main>
+
+    <footer>
+      <div id="status">正在读取配置…</div>
+      <button id="btn-save" class="primary" type="button">保存并立即生效</button>
+    </footer>
+
+    <script type="module" src="/src/settings-page.ts"></script>
+  </body>
+</html>
