@@ -206,9 +206,10 @@ pub fn is_visible<R: Runtime>(app: &AppHandle<R>, pet_label: &str) -> bool {
 /// 全局光标与按键状态本来就有（而且实测是准的）。
 pub fn close_on_outside_press<R: Runtime>(app: &AppHandle<R>, cursor: Vec2) {
     // 先把标签列表拷出来：别在持锁期间做跨 webview 调用（与 lib.rs 的广播同一约定）
-    let labels: Vec<String> = match app.state::<crate::state::AppState>().pets.lock() {
-        Ok(pets) => pets.keys().map(|label| menu_label(label)).collect(),
-        Err(_) => return,
+    let labels: Vec<String> = {
+        let state = app.state::<crate::state::AppState>();
+        let pets = crate::watchdog::timed_lock(&state.pets, "pets（菜单外点关闭）");
+        pets.keys().map(|label| menu_label(label)).collect()
     };
     for label in labels {
         let Some(window) = app.get_webview_window(&label) else {

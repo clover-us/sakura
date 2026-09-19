@@ -24,6 +24,7 @@ pub mod menu_window;
 pub mod model;
 pub mod pet_protocol;
 pub mod state;
+pub mod watchdog;
 
 mod diagnostics;
 mod pet_window;
@@ -203,6 +204,8 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     // ---- 6. 轮询线程（光标采样 + 显示器几何） ----
     spawn_poll_loop(app.clone());
+    // ---- 6.5 主线程健康看门狗（**独立线程**：轮询线程自己也可能是被卡住的那个，见 watchdog.rs） ----
+    watchdog::spawn_main_watchdog(app.clone());
 
     // ---- 7. 排障探针（仅在设置 WHALE_PET_DIAG_PRESS 时启用，见 diagnostics 里的说明） ----
     match std::env::var("WHALE_PET_DIAG_PRESS").as_deref() {
@@ -361,10 +364,7 @@ fn broadcast_cursor(app: &AppHandle, sample: CursorSample) {
     // 先把标签列表取出来，**别在持锁期间做跨 webview 调用**（避免长持有与死锁风险）
     let labels: Vec<String> = {
         let state = app.state::<AppState>();
-        let pets = match state.pets.lock() {
-            Ok(pets) => pets,
-            Err(_) => return,
-        };
+        let pets = watchdog::timed_lock(&state.pets, "pets（广播光标）");
         let labels = pets.keys().cloned().collect();
         labels
     };
@@ -378,7 +378,7 @@ fn broadcast_cursor(app: &AppHandle, sample: CursorSample) {
 /// 兜底命中：当光标进入某只宠物的**身体命中区**时，把窗口恢复为"可交互"。
 ///
 /// 注意判据是**命中区**（与前端 `hitbox.ts::scaleHitBox` 同一套几何），不是整个包围盒——
-/// 用包围盒会和前端的精确判定互相打架，详见函数内部的注释。
+/// 用包围盒会和前端的精确判定互相打架，详见下面的注释。
 ///
 /// 为什么只做"恢复"这一个方向（这一点与上游 Electron 实现不同，务必理解）：
 ///   - Electron 的 `setIgnoreMouseEvents(true, { forward: true })` 在穿透时仍会转发鼠标移动，
@@ -391,41 +391,73 @@ fn broadcast_cursor(app: &AppHandle, sample: CursorSample) {
 ///         inputBusy 那条注释描述的事故）。因此 busy 期间绝对不动。
 ///   - 结果是：最坏情况只是窗口多保持一会儿可交互（透明区域仍由页面自己的命中区约束），
 ///     不会出现"点不到宠物"或"拖拽断掉"这两类致命问题。
+///
+/// ## 两段式写法（**这里曾经死锁过，不要再合并回一段**）
+///
+/// 本函数跑在光标轮询线程上，而"翻转穿透"最终会走到 `SetWindowLongW`——目标窗口归
+/// **主线程**所有，跨线程改样式时 Windows 会 `SendMessage` 给主线程并**等它派发**。
+/// 于是老写法（持锁 + 在锁内翻转穿透）构成一个死锁环：
+///   轮询线程持有 `state.pets` 锁 → 等主线程派发样式消息 → 主线程正卡在 `state.pets` 锁上。
+/// 现象是"宠物停在半空、点不动、日志戛然而止、CPU 0"，完整复盘见 `watchdog.rs`。
+///
+/// 因此固定成两步：
+///   ① 持锁只做"读 + 记账"（`plan_interactive`），**绝不动窗口**；
+///   ② 出锁之后把"落样式"投递给主线程（`run_on_main_thread`，非阻塞）——
+///      轮询线程既不持锁做窗口调用，也不会阻塞在任何窗口调用上，死锁环从结构上不成立。
 fn apply_fallback_hit(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
-    let state = app.state::<AppState>();
-    let Ok(mut pets) = state.pets.lock() else {
-        return;
+    // ① 持锁期：判定 + 记账，产出"需要恢复交互"的标签清单
+    let planned: Vec<String> = {
+        let state = app.state::<AppState>();
+        let mut pets = watchdog::timed_lock(&state.pets, "pets（兜底命中判定）");
+        let mut planned = Vec::new();
+        for (label, runtime) in pets.iter_mut() {
+            if runtime.state.input_busy || runtime.state.interactive {
+                continue;
+            }
+            // **必须用"身体命中区"判定，而不是整个包围盒**（这里踩过一个很隐蔽的坑）：
+            //
+            // 前端用的是命中区（`hitbox.ts::scaleHitBox`，只有身体那一块），包围盒里
+            // "命中区之外的那一圈"是透明像素、前端判定为**应当穿透**。早期这里按包围盒来判，
+            // 于是两边**互相打架**：前端翻成穿透 → 兜底立刻翻回可交互 → 前端下一帧又翻成穿透 → …
+            // 日志特征很好认（用户实测日志里成对出现）：
+            //
+            // ```text
+            // [whale-pet] 可交互=false → transparent=true      ← 前端要求穿透
+            // [whale-pet] 可交互=true  → transparent=false     ← 兜底立刻翻回来（前端没有对应日志）
+            // ```
+            //
+            // 后果有两个，用户都报了：**那一圈时而吃点击时而不吃**（点不动/抓不住），
+            // 以及"拖拽释放后感觉宠物不听使唤"。改成与前端同一套命中几何之后，
+            // 两边在同一时刻必然得出同一结论，不可能再打架。
+            let origin = runtime.state.box_origin();
+            let hit = runtime.config.hit_box;
+            let inside = cursor_x >= origin.x + hit.x
+                && cursor_x < origin.x + hit.x + hit.width
+                && cursor_y >= origin.y + hit.y
+                && cursor_y < origin.y + hit.y + hit.height;
+            if !inside {
+                continue;
+            }
+            if runtime.plan_interactive(true).is_some() {
+                planned.push(label.clone());
+            }
+        }
+        planned
     };
-    for (label, runtime) in pets.iter_mut() {
-        if runtime.state.input_busy || runtime.state.interactive {
-            continue;
-        }
-        // **必须用"身体命中区"判定，而不是整个包围盒**（这里踩过一个很隐蔽的坑）：
-        //
-        // 前端用的是命中区（`hitbox.ts::scaleHitBox`，只有身体那一块），包围盒里
-        // "命中区之外的那一圈"是透明像素、前端判定为**应当穿透**。早期这里按包围盒来判，
-        // 于是两边**互相打架**：前端翻成穿透 → 兜底立刻翻回可交互 → 前端下一帧又翻成穿透 → …
-        // 日志特征很好认（用户实测日志里成对出现）：
-        //
-        // ```text
-        // [whale-pet] 可交互=false → transparent=true      ← 前端要求穿透
-        // [whale-pet] 可交互=true  → transparent=false     ← 兜底立刻翻回来（前端没有对应日志）
-        // ```
-        //
-        // 后果有两个，用户都报了：**那一圈时而吃点击时而不吃**（点不动/抓不住），
-        // 以及"拖拽释放后感觉宠物不听使唤"。改成与前端同一套命中几何之后，
-        // 两边在同一时刻必然得出同一结论，不可能再打架。
-        let origin = runtime.state.box_origin();
-        let hit = runtime.config.hit_box;
-        let inside = cursor_x >= origin.x + hit.x
-            && cursor_x < origin.x + hit.x + hit.width
-            && cursor_y >= origin.y + hit.y
-            && cursor_y < origin.y + hit.y + hit.height;
-        if !inside {
-            continue;
-        }
-        if let Err(err) = runtime.apply_interactive(true) {
-            eprintln!("[whale-pet] 兜底恢复交互失败 {label}：{err}");
+
+    // ② 出锁期：把"落样式"投递给主线程（= 窗口所属线程），失败只记日志
+    for label in planned {
+        let poster = app.clone();
+        let target = label.clone();
+        if let Err(err) = app.run_on_main_thread(move || {
+            let Some(window) = poster.get_webview_window(&target) else {
+                return;
+            };
+            if let Err(err) = pet_window::apply_interactive_style(&window, true) {
+                eprintln!("[whale-pet] 兜底恢复交互失败 {target}：{err}");
+            }
+        }) {
+            eprintln!("[whale-pet] 兜底恢复交互：投递主线程失败 {label}：{err}");
         }
     }
 }

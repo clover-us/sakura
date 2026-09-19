@@ -6,20 +6,26 @@
 //! 错误约定：统一返回 `Result<T, String>`，错误信息是**给人看的**中文句子
 //! （会原样出现在前端控制台与错误条里），不要返回 raw 的 Debug 输出。
 
-use std::sync::MutexGuard;
-
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::model::{DisplaysSample, PetConfigDto, PetRuntimeDto};
 use crate::pet_window::{self, PetRuntime};
 use crate::state::AppState;
+use crate::watchdog;
 
-/// 取出某个宠物的运行时（持锁在上层作用域内，调用方注意不要在此期间做慢操作）
+/// 取出某个宠物的运行时。
+///
+/// **纪律（曾经违反过，代价是一次死锁）**：持锁期间只做"读账本 / 改账本"，
+/// **绝不做窗口操作、跨 webview 调用等会阻塞在别的线程上的事**——
+/// 光标轮询线程也在抢这把锁，一旦它持锁去改窗口样式（会 `SendMessage` 给主线程并等派发），
+/// 而主线程正等这把锁，两边就永久互等（复盘见 `crate::watchdog` 的模块注释）。
+/// 需要动窗口时：先在锁内产出"计划"，出锁后再落（见 `set_pet_interactive` 的写法）。
+/// 取锁本身带"等太久就告警"（`watchdog::timed_lock`），真出问题日志里能看见。
 fn with_pet<F, T>(state: &AppState, label: &str, action: F) -> Result<T, String>
 where
     F: FnOnce(&mut PetRuntime<tauri::Wry>) -> Result<T, String>,
 {
-    let mut pets: MutexGuard<'_, _> = state.pets.lock().map_err(|_| "宠物窗口表锁已被污染".to_string())?;
+    let mut pets = watchdog::timed_lock(&state.pets, "pets（前端命令）");
     let runtime = pets.get_mut(label).ok_or_else(|| format!("找不到窗口标签为 {label} 的宠物"))?;
     action(runtime)
 }

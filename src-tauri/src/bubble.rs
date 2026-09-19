@@ -108,7 +108,7 @@ fn origin_for(record: &BubbleRecord, box_x: f64, box_y: f64) -> Vec2 {
 /// `set_pet_bounds` 一直在维护它。
 fn pet_box_origin<R: Runtime>(app: &AppHandle<R>, pet_label: &str) -> Option<Vec2> {
     let state = app.state::<crate::state::AppState>();
-    let pets = state.pets.lock().ok()?;
+    let pets = crate::watchdog::timed_lock(&state.pets, "pets（气泡跟随）");
     pets.get(pet_label).map(|runtime| runtime.state.box_origin())
 }
 
@@ -578,11 +578,16 @@ fn set_click_through<R: Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(),
         .map_err(|e| format!("取气泡窗句柄失败（{}）：{e}", window.label()))?
         .0 as isize;
 
-    let after = apply_one(hwnd, true);
-    // SAFETY: 回调只做样式位读写；lparam 未使用
-    unsafe {
-        EnumChildWindows(hwnd, on_child, 0);
-    }
+    // 递归给整棵子窗口树设位是**跨进程**调用（子窗口有几个归 WebView2 进程），
+    // 而跨进程 SendMessage 会等对方线程派发——计时告警，见 watchdog 的复盘。
+    let after = crate::watchdog::timed("气泡/菜单窗点击穿透（含子窗口）", || {
+        let after = apply_one(hwnd, true);
+        // SAFETY: 回调只做样式位读写；lparam 未使用
+        unsafe {
+            EnumChildWindows(hwnd, on_child, 0);
+        }
+        after
+    });
     if after & WS_EX_TRANSPARENT == 0 {
         return Err(format!(
             "气泡窗点击穿透设置失败（{}）：设置后顶层窗口的 WS_EX_TRANSPARENT 仍为 0（ex={after:#x}）",

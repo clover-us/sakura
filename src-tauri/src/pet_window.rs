@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter, PhysicalPosition, Runtime, WebviewUrl, WebviewWi
 use crate::config::{AppConfig, Corner, PetEntry};
 use crate::display;
 use crate::model::{PetConfigDto, PetRuntimeDto, PetWindowState, Rect, Size, Vec2};
+use crate::watchdog;
 
 /// 事件名：窗口位置/尺寸状态（前端用它作为位置的唯一真相）
 pub const EVENT_WINDOW_STATE: &str = "pet://window-state";
@@ -95,10 +96,16 @@ impl<R: Runtime> PetRuntime<R> {
     }
 
     /// 把窗口移动到指定的**窗口内容区**坐标（物理像素，屏幕坐标系）
+    ///
+    /// 计时告警的原因：`set_position` 内部会重写整个扩展样式并 `SetWindowPos(SWP_FRAMECHANGED)`，
+    /// 这类调用会等目标窗口所属线程派发消息——拖拽/抛掷时它被以 60 次/秒的频率调用，
+    /// 一旦观察到它耗时异常，是"卡顿/卡死"的第一手线索（见 `watchdog` 的复盘）。
     pub fn move_to(&self, origin: Vec2) -> Result<(), String> {
-        self.window
-            .set_position(PhysicalPosition::new(origin.x.round(), origin.y.round()))
-            .map_err(|e| format!("移动窗口失败 {}：{e}", self.label()))
+        watchdog::timed("移动宠物窗口", || {
+            self.window
+                .set_position(PhysicalPosition::new(origin.x.round(), origin.y.round()))
+        })
+        .map_err(|e| format!("移动窗口失败 {}：{e}", self.label()))
     }
 
     /// 翻转点击穿透（`ignore = true` 表示整窗穿透，鼠标事件落到下层应用）
@@ -119,26 +126,65 @@ impl<R: Runtime> PetRuntime<R> {
         }
     }
 
-    /// 按前端/兜底通道的意图翻转穿透并记账
+    /// 按前端/兜底通道的意图翻转穿透并记账。
+    ///
+    /// **只能在主线程（= 窗口所属线程）上调用。** 非主线程（光标轮询线程、
+    /// `spawn_hide_until_shown` 之类的工作线程）必须改走
+    /// 「[`Self::plan_interactive`] 记账 + `AppHandle::run_on_main_thread` 投递」这条路，
+    /// 否则会死锁——跨线程改窗口样式时 Windows 会 `SendMessage` 给窗口所属线程并**等它派发**，
+    /// 一旦此刻主线程正在等同一把 `state.pets` 锁，两边就互等到天荒地老。
+    /// 完整的复盘见 `watchdog.rs` 的模块注释。
     ///
     /// `interactive = true`  → 窗口可交互（`ignore = false`）
     /// `interactive = false` → 整窗穿透（`ignore = true`）
     pub fn apply_interactive(&mut self, interactive: bool) -> Result<(), String> {
+        match self.plan_interactive(interactive) {
+            Some(value) => apply_interactive_style(&self.window, value),
+            None => Ok(()),
+        }
+    }
+
+    /// **持锁期**调用：只改"意图账本"，**绝不动窗口**。
+    ///
+    /// 返回 `Some(值)` 表示确实需要翻转（调用方应把它落到窗口样式上，且必须出锁之后再落）。
+    pub fn plan_interactive(&mut self, interactive: bool) -> Option<bool> {
         if self.state.interactive == interactive {
-            return Ok(());
+            return None;
         }
         self.state.interactive = interactive;
-        self.set_ignore_cursor(!interactive)?;
-        // 每次翻转都把**实际样式**打出来：这是判断"窗口此刻是否在吃点击"的唯一真相
-        // （前端上报的是意图，命令失败或竞态时可能与实际不一致）
-        eprintln!(
-            "[whale-pet] 窗口 {}：可交互={} → {}",
-            self.label(),
-            interactive,
-            style_summary(self)
-        );
-        Ok(())
+        Some(interactive)
     }
+
+    /// **出锁期（或主线程）**调用：把意图落到窗口样式上。
+    ///
+    /// 记账已由 [`Self::plan_interactive`] 完成，所以这里失败只记日志、不回滚账本
+    /// （下一步翻转会重新对齐；这也是原来 `apply_interactive` 的行为）。
+    pub fn apply_interactive_style(&self, interactive: bool) -> Result<(), String> {
+        apply_interactive_style(&self.window, interactive)
+    }
+}
+
+/// **只凭窗口句柄**翻转点击穿透。
+///
+/// 为什么单独有这个自由函数：兜底命中的"落样式"是**投递到主线程**执行的
+/// （见 `lib.rs::apply_fallback_hit`），那个闭包里只有窗口句柄、拿不到 `PetRuntime`。
+/// 它同时也把"记账已由 `plan_interactive` 完成"这件事写死在调用约定里：
+/// 本函数不管账本，只管窗口。
+pub fn apply_interactive_style<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    interactive: bool,
+) -> Result<(), String> {
+    watchdog::timed("翻转点击穿透", || window.set_ignore_cursor_events(!interactive))
+        .map_err(|e| format!("设置点击穿透失败 {}：{e}", window.label()))?;
+    // 每次翻转都把**实际样式**打出来：这是判断"窗口此刻是否在吃点击"的唯一真相
+    // （前端上报的是意图，命令失败或竞态时可能与实际不一致）
+    eprintln!(
+        "[whale-pet] 窗口 {}：可交互={} → {}",
+        window.label(),
+        interactive,
+        style_summary(window)
+    );
+    Ok(())
 }
 
 /// 创建全部宠物窗口，返回 `标签 -> 运行时` 的表
@@ -335,7 +381,7 @@ fn create_one<R: Runtime>(
         runtime.state.size.height,
         runtime.state.box_origin().x,
         runtime.state.box_origin().y,
-        style_summary(&runtime),
+        style_summary(&runtime.window),
     );
     Ok(runtime)
 }
@@ -376,8 +422,8 @@ fn window_ex_style<R: Runtime>(_window: &tauri::WebviewWindow<R>) -> i64 {
 ///
 /// 之所以把这几个位打进日志：宠物是**置顶透明窗**，"点不到别的窗口"这类问题
 /// 只有看这几个位才能确证，前端上报的"意图"可能与实际不一致。
-pub fn style_summary<R: Runtime>(runtime: &PetRuntime<R>) -> String {
-    let current = window_ex_style(&runtime.window);
+pub fn style_summary<R: Runtime>(window: &tauri::WebviewWindow<R>) -> String {
+    let current = window_ex_style(window);
     let transparent = current & 0x20 != 0;
     format!(
         "ex=0x{current:X} transparent={} noactivate={} layered={}",
@@ -473,7 +519,11 @@ pub fn strip_extension(file_name: &str) -> String {
 
 /// 把窗口状态广播给对应的前端（前端据此刷新"位置真相"）
 pub fn emit_window_state<R: Runtime>(runtime: &PetRuntime<R>) {
-    if let Err(err) = runtime.window.emit(EVENT_WINDOW_STATE, runtime.runtime_dto()) {
+    // 跨 webview 调用同样会等窗口所属线程派发消息，故一并计时（见 watchdog 的复盘）
+    let sent = watchdog::timed("广播窗口状态", || {
+        runtime.window.emit(EVENT_WINDOW_STATE, runtime.runtime_dto())
+    });
+    if let Err(err) = sent {
         // 事件发不出去通常意味着 webview 已销毁（窗口正在关闭），只记日志不打断
         eprintln!("[whale-pet] 广播窗口状态失败 {}：{err}", runtime.label());
     }
@@ -495,10 +545,13 @@ pub fn apply_bounds<R: Runtime>(runtime: &mut PetRuntime<R>, x: f64, y: f64, wid
     let size_changed = (width - runtime.state.size.width).abs() > 0.5 || (height - runtime.state.size.height).abs() > 0.5;
     if size_changed {
         runtime.state.size = Size { width: width.round(), height: height.round() };
-        runtime
-            .window
-            .set_size(tauri::PhysicalSize::new(runtime.state.size.width, runtime.state.size.height))
-            .map_err(|e| format!("调整窗口尺寸失败 {}：{e}", runtime.label()))?;
+        // 窗口尺寸变化同样走"计时告警"（会等窗口所属线程派发消息）
+        watchdog::timed("调整宠物窗口尺寸", || {
+            runtime
+                .window
+                .set_size(tauri::PhysicalSize::new(runtime.state.size.width, runtime.state.size.height))
+        })
+        .map_err(|e| format!("调整窗口尺寸失败 {}：{e}", runtime.label()))?;
     }
     // 位置按"增量"累加，避免前端持有过期的绝对坐标把窗口拽回去（快速拖拽时确实会发生）
     let delta = Vec2 {
