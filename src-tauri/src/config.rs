@@ -205,6 +205,20 @@ pub struct AppConfig {    /// 配置版本号（将来做迁移用；M0 校验�
     /// 因为 config.jsonc 是用户会备份、会贴出来、会放进 git 的文件。
     #[serde(default)]
     pub llm: LlmConfig,
+    /// 表情包映射：**名称 → 内容描述**（键对应 `<数据目录>/memes/<名称>.png`）。
+    ///
+    /// 用途与上游一致：
+    /// - 碎碎念开配图时**随机抽一张**，把该图的描述注入提示词，让那句话配合画面（无上下文可选，故随机）；
+    /// - 对话开配图时把**整张清单**交给模型，由它按语境挑，回复末尾用 `[图:名称]` 标记。
+    ///
+    /// 只认"磁盘上真有这张图 **且** 描述非空"的条目，其余静默剔除并按名称排序（见 `memes::pool`）——
+    /// 用户删图不删配置时不该报错，也不该把不存在的图交给模型。
+    ///
+    /// 缺这一整段时从**内置模板**回落（与动画池同一套做法）：
+    /// `scripts\import-animations.ps1 -All` 导入素材后，老配置不必手写这张表也能用上配图；
+    /// 自己写一份则**整段替换**（想只用几张就自己列几张）。
+    #[serde(default = "default_memes")]
+    pub memes: std::collections::HashMap<String, String>,
 }
 
 /// LLM 配置（M3）：provider / 模型 / 两个功能开关
@@ -254,6 +268,9 @@ pub struct WhisperConfig {
     /// 人设（system prompt 的主体）；留空用内置默认（见 [`default_llm_persona`]）
     #[serde(default)]
     pub persona: String,
+    /// 碎碎念配图：从表情包里随机抽一张一起显示（默认关）
+    #[serde(default)]
+    pub image_enabled: bool,
 }
 
 /// 对话配置
@@ -265,6 +282,9 @@ pub struct ChatConfig {
     /// 送进上下文的轮数（1 轮 = 1 问 1 答）：默认 5，与上游 `chatMemoryRounds` 一致
     #[serde(default = "default_chat_memory_rounds")]
     pub memory_rounds: u32,
+    /// 对话配图：把整张表情包清单交给模型按语境挑（默认关）
+    #[serde(default)]
+    pub image_enabled: bool,
 }
 
 fn default_llm_provider() -> String {
@@ -940,6 +960,11 @@ pub fn default_animations() -> AnimationsConfig {
         categories: Vec::new(),
         events: std::collections::HashMap::new(),
     })
+}
+
+/// 解析内置模板得到默认表情包表（旧配置缺这一整段时的回落来源；失败时退化为空表）
+pub fn default_memes() -> std::collections::HashMap<String, String> {
+    parse_template("memes").unwrap_or_default()
 }
 
 /// 解析内置模板得到默认的顶层权重（失败时回落上游默认值 10/5/5）

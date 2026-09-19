@@ -616,6 +616,95 @@ fn main() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ---- 13. 表情包（M3）：池过滤 / 随机抽 / 两种提示词 / 选图标记解析 ----
+    println!("\n[13] 表情包（碎碎念随机抽 + 对话选图）");
+    {
+        use whale_pet_desktop_lib::memes;
+
+        // 临时数据目录里放两张真图，配置里写四条（一条缺图、一条描述为空）
+        let dir = std::env::temp_dir().join("whale-pet-smoke-memes");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(dir.join("memes"));
+        for name in ["可爱", "压力一只大肥鱼", "描述是空的"] {
+            let _ = std::fs::write(dir.join("memes").join(format!("{name}.png")), b"fake-png");
+        }
+        let mut config: AppConfig = serde_json::from_str(&strip(&template)).expect("模板应可解析");
+        config.memes.clear();
+        config.memes.insert("可爱".into(), "标准正面卖萌立绘".into());
+        config.memes.insert("压力一只大肥鱼".into(), "冒汗摊手喊压力".into());
+        config.memes.insert("图不在磁盘上".into(), "描述写得好但图没了".into());
+        config.memes.insert("描述是空的".into(), "   ".into());
+
+        let pool = memes::pool(&config, &dir);
+        check(
+            "池只认『图真在 + 描述非空』",
+            pool.len() == 2 && pool.iter().all(|m| m.name != "图不在磁盘上" && m.name != "描述是空的"),
+            &format!("实际 {} 条：{:?}", pool.len(), pool.iter().map(|m| &m.name).collect::<Vec<_>>()),
+        );
+        check(
+            "池按名称有序（提示词清单在多次请求间稳定）",
+            pool.windows(2).all(|pair| pair[0].name <= pair[1].name),
+            &format!("{:?}", pool.iter().map(|m| &m.name).collect::<Vec<_>>()),
+        );
+        check("空池随机抽返回 None", memes::pick_random(&[]).is_none(), "");
+        check(
+            "非空池随机抽返回池内条目",
+            memes::pick_random(&pool).map(|m| pool.iter().any(|p| p.name == m.name)).unwrap_or(false),
+            "",
+        );
+
+        // 两种提示词（措辞照抄上游）
+        let picked = pool.iter().find(|m| m.name == "可爱").cloned().expect("池里应有『可爱』");
+        let whisper_text = memes::whisper_user_text(whale_pet_desktop_lib::llm::WHISPER_USER_PROMPT, &picked);
+        check(
+            "碎碎念提示词带图名与描述，并要求配合画面",
+            whisper_text.contains("这次会配一张表情包一起显示")
+                && whisper_text.contains("可爱")
+                && whisper_text.contains("标准正面卖萌立绘")
+                && whisper_text.contains("不要描述画面本身"),
+            &whisper_text,
+        );
+        let instruction = memes::chat_image_instruction(&pool);
+        check(
+            "对话配图指令 = 清单 + 标记要求",
+            instruction.contains("[配图]") && instruction.contains("- 可爱：标准正面卖萌立绘") && instruction.contains("[图:名称]"),
+            &instruction,
+        );
+
+        // 选图标记解析：命中 / 全角冒号 / 幻觉名 / 无标记 / 只有标记
+        let (text, chosen) = memes::split_choice("好呀，给你看一张～\n[图:可爱]", &pool);
+        check(
+            "命中标记：正文剥掉标记行、返回图名",
+            text == "好呀，给你看一张～" && chosen.as_deref() == Some("可爱"),
+            &format!("{text:?} / {chosen:?}"),
+        );
+        let (text, chosen) = memes::split_choice("嗯嗯\n[图：可爱]", &pool);
+        check("全角冒号也认", text == "嗯嗯" && chosen.as_deref() == Some("可爱"), &format!("{text:?}"));
+        let (text, chosen) = memes::split_choice("这句没问题\n[图:不存在的图]", &pool);
+        check(
+            "幻觉图名：不配图且正文原样保留（绝不吞正文）",
+            text.contains("这句没问题") && text.contains("[图:不存在的图]") && chosen.is_none(),
+            &format!("{text:?}"),
+        );
+        let (text, chosen) = memes::split_choice("就是一句普通回复", &pool);
+        check("没有标记：原样返回", text == "就是一句普通回复" && chosen.is_none(), &text);
+        let (text, chosen) = memes::split_choice("[图:可爱]", &pool);
+        check(
+            "只有标记行：不把正文吃成空字符串",
+            !text.trim().is_empty() && chosen.as_deref() == Some("可爱"),
+            &format!("{text:?}"),
+        );
+
+        // 素材地址编码：中文与空格要编码，`/` 也被编码（出不了 memes 目录）
+        let path = memes::asset_path("a b/可爱");
+        check(
+            "素材路径百分号编码（含 / 与空格）",
+            path.starts_with("memes/") && path.contains("%20") && path.contains("%2F") && path.ends_with(".png"),
+            &path,
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // SAFETY: 单线程
     let (passed, failed) = unsafe { (PASSED, FAILED) };
     println!("\n=== 结果：通过 {passed} 项，失败 {failed} 项 ===");

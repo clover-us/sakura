@@ -23,6 +23,15 @@ pub const SCHEME: &str = "pet";
 /// 资源根下的子目录名（与 config.rs 的 `WEBM_DIR_NAME` 保持一致）
 const WEBM_SUBDIR: &str = "webm";
 
+/// 表情包目录（M3）：与 `memes::MEMES_DIR` 一致。
+///
+/// **白名单式**：协议**只**服务下面列出的子目录，其余一律 400——
+/// 每加一类素材都要在这里显式登记（这是"素材协议不会变成任意文件读取"的那道门）。
+const MEMES_SUBDIR: &str = "memes";
+
+/// 允许通过素材协议访问的子目录
+const ALLOWED_SUBDIRS: [&str; 2] = [WEBM_SUBDIR, MEMES_SUBDIR];
+
 /// 前端使用的资源根地址（随平台变化）
 pub fn asset_base_url() -> String {
     if cfg!(any(windows, target_os = "android")) {
@@ -44,24 +53,28 @@ pub fn handle_request(app_data_dir: &Path, request: &Request<Vec<u8>>) -> Respon
 
     // 协议根路径：给出可读的说明（浏览器直接打开 pet://localhost 时能看到）
     if raw_path == "/" || raw_path.is_empty() {
-        return text_response(StatusCode::OK, &format!("whale-pet asset protocol\nroot: /{WEBM_SUBDIR}/<file>"));
+        let roots = ALLOWED_SUBDIRS.map(|dir| format!("/{dir}/<file>")).join("  ");
+        return text_response(StatusCode::OK, &format!("whale-pet asset protocol\nroot: {roots}"));
     }
 
-    // 只服务 /webm/ 下的素材（M0）；越界一律 400
-    let Some(relative) = raw_path.strip_prefix(&format!("/{WEBM_SUBDIR}/")) else {
+    // 只服务**白名单子目录**下的素材（动画 / 表情包）；越界一律 400
+    let Some((subdir, relative)) = ALLOWED_SUBDIRS
+        .iter()
+        .find_map(|dir| raw_path.strip_prefix(&format!("/{dir}/")).map(|rest| (*dir, rest)))
+    else {
         return text_response(
             StatusCode::BAD_REQUEST,
-            &format!("只支持 /{WEBM_SUBDIR}/ 下的素材请求，收到：{raw_path}"),
+            &format!("只支持 {ALLOWED_SUBDIRS:?} 下的素材请求，收到：{raw_path}"),
         );
     };
 
-    // 百分号解码：中文动画文件名（如 待机.webm）在 URL 里是 %E5%BE%85... 形式
+    // 百分号解码：中文文件名（如 待机.webm / 可爱.png）在 URL 里是 %E5%BE%85... 形式
     let decoded = match percent_encoding::percent_decode_str(relative).decode_utf8() {
         Ok(name) => name.into_owned(),
         Err(_) => return text_response(StatusCode::BAD_REQUEST, "素材名不是合法的 UTF-8 百分号编码"),
     };
 
-    let root = app_data_dir.join(WEBM_SUBDIR);
+    let root = app_data_dir.join(subdir);
     let Some(full_path) = sanitize_join(&root, &decoded) else {
         return text_response(StatusCode::BAD_REQUEST, "素材路径非法（疑似路径穿越）");
     };

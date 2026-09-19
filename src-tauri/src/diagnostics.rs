@@ -451,7 +451,8 @@ pub fn spawn_llm_probe(app: tauri::AppHandle, action: String, delay_ms: u64) {
         }
 
         if want("selftest") {
-            match crate::llm::selftest(&config.llm, &app_data_dir, &name) {
+            let memes = crate::memes::pool(&config, &app_data_dir);
+            match crate::llm::selftest(&config.llm, &app_data_dir, &name, &memes) {
                 Ok(text) => eprintln!("[whale-pet][LLM 探针] 自检成功：{text}"),
                 Err(failure) => {
                     eprintln!("[whale-pet][LLM 探针] 自检失败（{}）：{}", failure.reason(), failure.message())
@@ -469,8 +470,10 @@ pub fn spawn_llm_probe(app: tauri::AppHandle, action: String, delay_ms: u64) {
         }
 
         if want("chat") {
-            match crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, "你好呀，今天过得怎么样？") {
-                Ok(text) => {
+            let memes = crate::memes::pool(&config, &app_data_dir);
+            match crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, "你好呀，今天过得怎么样？", &memes) {
+                Ok(generation) => {
+                    let text = generation.text;
                     eprintln!("[whale-pet][LLM 探针] 对话成功：{text}");
                     let memory = crate::memory::MemoryStore::new(&app_data_dir);
                     let all = memory.all(&pet_id);

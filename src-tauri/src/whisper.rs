@@ -40,6 +40,9 @@ pub struct WhisperEvent {
     pub pet_label: String,
     /// 说的内容
     pub text: String,
+    /// 可选配图：**相对素材路径**（如 `memes/xxx.png`），页面拼上 assetBaseUrl 后显示
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 /// 轮询线程每秒调一次
@@ -95,14 +98,17 @@ pub fn tick(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let started = Instant::now();
-        match crate::llm::whisper(&config.llm, &app_data_dir, &name) {
-            Ok(text) => {
+        let memes = crate::memes::pool(&config, &app_data_dir);
+        match crate::llm::whisper(&config.llm, &app_data_dir, &name, &memes) {
+            Ok(generation) => {
+                let text = generation.text;
+                let image = generation.meme.as_ref().map(|meme| crate::memes::asset_path(&meme.name));
                 eprintln!(
                     "[whale-pet][碎碎念] {label}：{text}（{}ms）",
                     started.elapsed().as_millis()
                 );
                 if let Some(window) = app.get_webview_window(&label) {
-                    if let Err(err) = window.emit(crate::pet_window::EVENT_WHISPER, WhisperEvent { pet_label: label.clone(), text }) {
+                    if let Err(err) = window.emit(crate::pet_window::EVENT_WHISPER, WhisperEvent { pet_label: label.clone(), text, image }) {
                         eprintln!("[whale-pet] 碎碎念下发失败 {label}：{err}");
                     }
                 }
@@ -141,12 +147,16 @@ fn log_failure(failure: &Failure, label: &str, elapsed: Duration) {
 ///
 /// 碎碎念与**对话回复**共用这条链路（与上游一致）：回复不在输入框里堆历史，
 /// 而是让宠物"说出来"——这正是桌宠该有的样子。
-pub fn emit(app: &AppHandle, label: &str, text: &str) {
+pub fn emit(app: &AppHandle, label: &str, text: &str, image: Option<&str>) {
     let Some(window) = app.get_webview_window(label) else {
         eprintln!("[whale-pet] 找不到宠物窗口 {label}，这条话没人显示：{text}");
         return;
     };
-    let payload = WhisperEvent { pet_label: label.to_string(), text: text.to_string() };
+    let payload = WhisperEvent {
+        pet_label: label.to_string(),
+        text: text.to_string(),
+        image: image.map(|path| path.to_string()),
+    };
     if let Err(err) = window.emit(crate::pet_window::EVENT_WHISPER, payload) {
         eprintln!("[whale-pet] 碎碎念下发失败 {label}：{err}");
     }
@@ -161,7 +171,9 @@ pub fn say_now(app: &AppHandle, label: &str, name: &str) -> Result<String, Failu
     if !config.llm.whisper_ready() {
         return Err(Failure::Disabled);
     }
-    let text = crate::llm::whisper(&config.llm, &app_data_dir, name)?;
-    emit(app, label, &text);
-    Ok(text)
+    let memes = crate::memes::pool(&config, &app_data_dir);
+    let generation = crate::llm::whisper(&config.llm, &app_data_dir, name, &memes)?;
+    let image = generation.meme.as_ref().map(|meme| crate::memes::asset_path(&meme.name));
+    emit(app, label, &generation.text, image.as_deref());
+    Ok(generation.text)
 }

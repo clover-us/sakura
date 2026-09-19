@@ -57,6 +57,9 @@ static RECORDS: OnceLock<Mutex<HashMap<String, BubbleRecord>>> = OnceLock::new()
 struct BubbleRecord {
     /// 最近一次要显示的文本（`None` = 已隐藏：页面若重载，不应再补注旧话）
     text: Option<String>,
+    /// 最近一次的配图（相对素材路径）。与 `text` **同生同灭**：窗口是复用的，
+    /// 页面重载后只还原文字不还原图，就会出现「这张图和这句话对不上」。
+    image: Option<String>,
     /// 气泡**底边中心**相对宠物包围盒原点的偏移。
     ///
     /// 由 `show()` 从"前端给的锚点 − 宿主已知的包围盒原点"算出来并记下，
@@ -76,6 +79,7 @@ impl Default for BubbleRecord {
     fn default() -> Self {
         Self {
             text: None,
+            image: None,
             anchor_dx: 0.0,
             anchor_dy: 0.0,
             width: 0.0,
@@ -150,20 +154,49 @@ pub fn follow<R: Runtime>(app: &AppHandle<R>, pet_label: &str) {
 /// 组装"把文本写进气泡并淡入"的注入脚本。
 ///
 /// 文本里的引号/反斜杠/换行都要转义，否则会破坏脚本本身（注入的是字符串字面量）。
-fn bubble_script(text: &str) -> String {
+///
+/// `image` 是**相对素材路径**（如 `memes/%E5%8F%AF%E7%88%B1.png`），
+/// **绝对地址由宿主拼**（`pet_protocol::asset_base_url()` 是平台差异的唯一真相）。
+///
+/// 为什么不让页面自己拼：`window.__PET_ENV__` 只有宠物页（index.html）注入了，气泡页没有——
+/// 第一版就是栽在这里：相对路径落回 dev server 的 `http://127.0.0.1:1420`，图片 404。
+/// 配图加载失败是**完全静默**的（泡泡里少一张图，看不出是路径错、协议没放行还是文件不在），
+/// 所以顺带给 `<img>` 挂了 onload/onerror 回报（见下），让"到底渲染出来没有"可 grep。
+fn bubble_script(text: &str, image: Option<&str>) -> String {
+    // 素材协议根地址：宿主是平台差异的唯一真相（页面侧不重复判断）
+    let base_url = crate::pet_protocol::asset_base_url();
     let escaped = text
         .replace('\\', "\\\\")
         .replace('\'', "\\'")
         .replace('\n', "\\n")
         .replace('\r', "");
+    // 配图加载成功/失败都回报一条日志。
+    let report_js = "function report(ok, detail){ try { window.__TAURI__.core.invoke('pet_debug_log', \
+                     { label: 'bubble', message: (ok ? '配图已加载 ' : '配图加载失败 ') + detail }); } catch (e) {} }";
+    let image_js = match image {
+        Some(path) => {
+            let escaped_path = path.replace('\\', "\\\\").replace('\'', "\\'");
+            format!(
+                "{report_js} \
+                 var base = '{base_url}'; \
+                 img.onload = function () {{ report(true, img.naturalWidth + 'x' + img.naturalHeight + ' ' + '{escaped_path}'); }}; \
+                 img.onerror = function () {{ report(false, '{escaped_path}（src=' + img.src + '）'); }}; \
+                 img.src = base + '/' + '{escaped_path}'; img.hidden = false;"
+            )
+        }
+        // 没有配图时必须**清掉上一张**，否则上一次的图会留在这个复用的窗口里
+        None => "img.hidden = true; img.removeAttribute('src');".to_string(),
+    };
     format!(
-        "(function () {{ var b = document.getElementById('bubble'); var t = document.getElementById('bubble-text'); if (!b || !t) return 'no-dom'; t.textContent = '{escaped}'; b.classList.add('is-on'); return 'ok'; }})()"
+        "(function () {{ var b = document.getElementById('bubble'); var t = document.getElementById('bubble-text'); \
+         var img = document.getElementById('bubble-image'); if (!b || !t || !img) return 'no-dom'; \
+         t.textContent = '{escaped}'; {image_js} b.classList.add('is-on'); return 'ok'; }})()"
     )
 }
 
-/// 把文本注入气泡页面（best-effort：页面尚未就绪时由 `on_page_load` 兜底补注）
-fn inject_text<R: Runtime>(window: &tauri::WebviewWindow<R>, text: &str) {
-    if let Err(err) = window.eval(bubble_script(text)) {
+/// 把文本（与可选配图）注入气泡页面（best-effort：页面尚未就绪时由 `on_page_load` 兜底补注）
+fn inject_text<R: Runtime>(window: &tauri::WebviewWindow<R>, text: &str, image: Option<&str>) {
+    if let Err(err) = window.eval(bubble_script(text, image)) {
         eprintln!("[whale-pet] 气泡文本注入失败 {}：{err}", window.label());
     }
 }
@@ -197,6 +230,10 @@ mod estimate {
     pub const MAX_HEIGHT: f64 = 320.0;
     /// 本体最小宽度（px）：一行短句也要有个像样的泡
     pub const MIN_WIDTH: f64 = 120.0;
+    /// 配图显示边长（px）：表情包素材是 384×384，等比缩到 168
+    pub const IMAGE_SIZE: f64 = 168.0;
+    /// 配图与文字之间的间距（px）
+    pub const IMAGE_GAP: f64 = 8.0;
 }
 
 /// 气泡窗请求参数（前端 → 宿主）
@@ -218,6 +255,9 @@ pub struct BubbleRequest {
     pub box_y: f64,
     /// 要显示的文本
     pub text: String,
+    /// 可选配图：**相对素材路径**（如 `memes/%E5%8F%AF%E7%88%B1.png`），由页面拼上 assetBaseUrl
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 /// 气泡窗状态（宿主侧记账的只读快照；诊断与将来的设置界面用）
@@ -232,15 +272,21 @@ pub struct BubbleState {
     pub size: crate::model::Size,
 }
 
-/// 按文本长度估算**窗口**尺寸（本体 + 四周透明余量；页面内是自适应布局，多给一点没关系）
-fn estimate_size(text: &str) -> (f64, f64) {
+/// 按文本长度（与可选配图）估算**窗口**尺寸（本体 + 四周透明余量；页面内是自适应布局，多给一点没关系）
+fn estimate_size(text: &str, has_image: bool) -> (f64, f64) {
     let chars = text.chars().count().max(1);
     let lines = chars.div_ceil(estimate::CHARS_PER_LINE).max(1);
     // 本体（文字 + 内边距 + 描边）
-    let body_height = lines as f64 * estimate::LINE_HEIGHT + estimate::BODY_PAD_Y;
-    let body_width =
+    let mut body_height = lines as f64 * estimate::LINE_HEIGHT + estimate::BODY_PAD_Y;
+    let mut body_width =
         (chars.min(estimate::CHARS_PER_LINE) as f64 * estimate::CHAR_WIDTH + estimate::BODY_PAD_X)
             .clamp(estimate::MIN_WIDTH, estimate::MAX_WIDTH);
+    if has_image {
+        // 配图按固定显示边长算（页面里也是这个尺寸），纵向再留出它与文字之间的间距。
+        // 只估个大概：窗口给宽了只是透明余量多一点，给窄了会把图裁掉——所以宁可保守。
+        body_height += estimate::IMAGE_SIZE + estimate::IMAGE_GAP;
+        body_width = body_width.max(estimate::IMAGE_SIZE + estimate::BODY_PAD_X);
+    }
     // 窗口 = 本体 + 投影/尖角余量
     (
         body_width + estimate::PAD_SIDE * 2.0,
@@ -258,7 +304,7 @@ pub fn prepare<R: Runtime>(app: &AppHandle<R>, pet_label: &str) -> Result<(), St
     if app.get_webview_window(&label).is_some() {
         return Ok(());
     }
-    let (width, height) = estimate_size("预备");
+    let (width, height) = estimate_size("预备", false);
     let window = create_window(app, &label, width, height, Vec2 { x: 0.0, y: 0.0 })?;
     // 建窗过程（WebView2 初始化）可能把窗口显示出来，这里**显式再藏一次**：
     // 进程外探针实测过"预备窗"会以 (0,0) 148×76 的可见窗口留在桌面上
@@ -303,12 +349,12 @@ fn create_window<R: Runtime>(
                     eprintln!("[whale-pet] {err}");
                 }
                 // 只有当这个窗口**确实**有待显示文本时才补注（隐藏时会清空）
-                let pending = records()
-                    .lock()
-                    .ok()
-                    .and_then(|map| map.get(window.label()).and_then(|r| r.text.clone()));
-                if let Some(text) = pending {
-                    inject_text(&window, &text);
+                let pending = records().lock().ok().and_then(|map| {
+                    map.get(window.label())
+                        .and_then(|record| record.text.clone().map(|text| (text, record.image.clone())))
+                });
+                if let Some((text, image)) = pending {
+                    inject_text(&window, &text, image.as_deref());
                 }
             }
         })
@@ -327,11 +373,12 @@ pub fn show<R: Runtime>(
     request: &BubbleRequest,
 ) -> Result<(), String> {
     let label = format!("{BUBBLE_LABEL_PREFIX}{pet_label}");
-    let (width, height) = estimate_size(&request.text);
+    let (width, height) = estimate_size(&request.text, request.image.is_some());
     // 记账：把锚点换算成"相对宠物包围盒的偏移"存下来，之后宠物每次移动都用它重摆气泡。
     // 包围盒原点**用请求里带来的那一份**（前端快照），理由见 BubbleRequest::box_x 的注释。
     let record = BubbleRecord {
         text: Some(request.text.clone()),
+        image: request.image.clone(),
         anchor_dx: request.anchor_x - request.box_x,
         anchor_dy: request.anchor_y - request.box_y,
         width,
@@ -359,7 +406,7 @@ pub fn show<R: Runtime>(
     // `on_page_load`。把当时的 url 打出来，下次再遇到"气泡不显示"一眼就能判断是哪一种。
     let page_url = window.url().map(|u| u.to_string()).unwrap_or_else(|_| "（读取失败）".to_string());
     eprintln!("[whale-pet] 气泡窗显示 {label}：{width}×{height} 页面 url={page_url}");
-    inject_text(&window, &request.text);
+    inject_text(&window, &request.text, request.image.as_deref());
     window.show().map_err(|e| format!("显示气泡窗口失败：{e}"))?;
     // 建窗窗口期（WebView2 的子窗口是异步建出来的）由守护线程补位
     spawn_click_through_guard(window.clone());
@@ -605,6 +652,7 @@ pub fn hide<R: Runtime>(app: &AppHandle<R>, pet_label: &str) -> Result<(), Strin
     if let Ok(mut map) = records().lock() {
         if let Some(record) = map.get_mut(&label) {
             record.text = None;
+    record.image = None;
         }
     }
     if let Some(window) = app.get_webview_window(&label) {

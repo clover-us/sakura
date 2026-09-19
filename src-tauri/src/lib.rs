@@ -26,6 +26,7 @@ pub mod config;
 pub mod display;
 pub mod llm;
 pub mod menu_window;
+pub mod memes;
 pub mod memory;
 pub mod model;
 pub mod pet_protocol;

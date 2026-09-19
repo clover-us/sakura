@@ -284,16 +284,34 @@ pub fn load_key(app_data_dir: &std::path::Path) -> Option<String> {
     }
 }
 
-/// 生成一句碎碎念
+/// 一次生成的结果：正文 + 可选配图（M3 表情包）。
+///
+/// 配图**不写进记忆**（对话的正文会被剥掉 `[图:名称]` 标记后再存），
+/// 原因：标记与"这次配了哪张图"是展示层的事，混进记忆会污染下一轮的上下文。
+pub struct Generation {
+    pub text: String,
+    pub meme: Option<crate::memes::Meme>,
+}
+
+/// 生成一句碎碎念（开配图时随机抽一张，并把它写进提示词）
 pub fn whisper(
     config: &LlmConfig,
     app_data_dir: &std::path::Path,
     pet_name: &str,
-) -> Result<String, Failure> {
+    memes: &[crate::memes::Meme],
+) -> Result<Generation, Failure> {
+    // 配图：碎碎念没有上下文可选，随机抽一张（与上游一致）
+    let picked = if config.whisper.image_enabled { crate::memes::pick_random(memes) } else { None };
+    let user_text = match picked {
+        Some(meme) => crate::memes::whisper_user_text(WHISPER_USER_PROMPT, meme),
+        None => whisper_user_text(),
+    };
+
     let key = load_key(app_data_dir);
     let client = Client::new(config, key.as_deref());
-    let messages = client.build_messages(pet_name, &[], &whisper_user_text());
-    client.complete(&messages)
+    let messages = client.build_messages(pet_name, &[], &user_text);
+    let text = client.complete(&messages)?;
+    Ok(Generation { text, meme: picked.cloned() })
 }
 
 /// 一轮对话（含记忆读写）：成功后把这一轮写进 `memory.json`
@@ -303,7 +321,8 @@ pub fn chat(
     pet_id: &str,
     pet_name: &str,
     user_text: &str,
-) -> Result<String, Failure> {
+    memes: &[crate::memes::Meme],
+) -> Result<Generation, Failure> {
     let text = user_text.trim();
     if text.is_empty() {
         return Err(Failure::BadResponse("消息为空".to_string()));
@@ -313,18 +332,30 @@ pub fn chat(
         return Err(Failure::BadResponse("消息过长（限 2000 字）".to_string()));
     }
 
+    // 配图：对话有语境，把整张清单交给模型挑（与上游一致）
+    let pool: &[crate::memes::Meme] = if config.chat.image_enabled { memes } else { &[] };
+    let outbound = if pool.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}{}", crate::memes::chat_image_instruction(pool))
+    };
+
     let memory = crate::memory::MemoryStore::new(app_data_dir);
     let history = memory.recent_messages(pet_id, config.chat.memory_rounds);
     let key = load_key(app_data_dir);
     let client = Client::new(config, key.as_deref());
-    let messages = client.build_messages(pet_name, &history, text);
+    let messages = client.build_messages(pet_name, &history, &outbound);
     let reply = client.complete(&messages)?;
 
-    // 记忆写失败不影响这次回复（用户已经看到答案了），只在日志里说明
-    if let Err(err) = memory.append_round(pet_id, text, &reply) {
+    // 解析选图标记：命中的名字必须在池内，否则不配图且**正文原样保留**
+    let (text_out, chosen) = crate::memes::split_choice(&reply, pool);
+    let meme = chosen.and_then(|name| pool.iter().find(|meme| meme.name == name).cloned());
+
+    // 记忆里存**干净的**正文（不含 `[图:名称]` 标记、也不含配图指令）
+    if let Err(err) = memory.append_round(pet_id, text, &text_out) {
         eprintln!("[whale-pet] 对话记忆写入失败：{err}");
     }
-    Ok(reply)
+    Ok(Generation { text: text_out, meme })
 }
 
 /// 连通性自检：用最小代价真发一次请求（碎碎念那句提示词就是最小代价）
@@ -332,9 +363,11 @@ pub fn selftest(
     config: &LlmConfig,
     app_data_dir: &std::path::Path,
     pet_name: &str,
+    memes: &[crate::memes::Meme],
 ) -> Result<String, Failure> {
     if !config.enabled {
         return Err(Failure::Disabled);
     }
-    whisper(config, app_data_dir, pet_name)
+    // 自检刻意**不带配图**：目的是确认"连得上、模型答得回来"，少一个变量干扰
+    whisper(config, app_data_dir, pet_name, memes).map(|generation| generation.text)
 }

@@ -1074,15 +1074,15 @@ export class PetRuntime {
    *
    * 气泡停留 10 秒（上游 `BUBBLE_DURATION_MS` 同值）：太短来不及看，太长像卡住了。
    */
-  async onWhisper(text: string): Promise<void> {
+  async onWhisper(text: string, image?: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) {
       // 空文本不该走到这里（宿主侧已经按"模型未返回文本"拦下），真到了就记一笔别静默
       petLogError('碎碎念: 收到空文本，已忽略', null);
       return;
     }
-    petLog(`碎碎念: ${trimmed}`);
-    this.say(trimmed, 10_000);
+    petLog(`碎碎念: ${trimmed}${image ? `（配图 ${image}）` : ''}`);
+    this.say(trimmed, 10_000, undefined, image);
 
     // 档位有两种形状（单个名字 / 候选数组）：交给上游的 pickSlot 处理，避免自己再写一遍规则
     const slots = this.petConfig.animations.events?.['whisper'];
@@ -1135,7 +1135,7 @@ export class PetRuntime {
    * `anchor` 只供诊断自测使用：正常气泡永远摆在宠物**头顶**，而"气泡是否吃点击"这个
    * 问题只有让气泡与宠物**重叠**才测得出来（见 `runBubbleOverlapTest`）。
    */
-  say(text: string, durationMs = 6000, anchor?: { x: number; y: number }): void {
+  say(text: string, durationMs = 6000, anchor?: { x: number; y: number }, image?: string): void {
     const anchorX = anchor?.x ?? this.boxOrigin.x + this.petConfig.size / 2;
     const anchorY =
       anchor?.y ??
@@ -1147,9 +1147,11 @@ export class PetRuntime {
       anchorY,
       // 包围盒原点一起给：宿主侧那份在"菜单外扩/缩回"期间会短暂不一致，
       // 让宿主据此推算"锚点相对包围盒的偏移"会把气泡算错一个外扩量（见 BubbleRequest 注释）
-      boxX: this.boxOrigin.x,
+boxX: this.boxOrigin.x,
       boxY: this.boxOrigin.y,
       text,
+      // image = 可选配图（相对素材路径）；不传就是纯文字气泡
+      image,
     }).catch((err: unknown) => petLogError('气泡: 显示失败', err));
     petLog(`气泡: 显示「${text}」锚点=(${anchorX.toFixed(0)},${anchorY.toFixed(0)}) 时长 ${durationMs}ms`);
     this.bubbleTimer = window.setTimeout(() => {

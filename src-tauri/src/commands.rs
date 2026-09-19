@@ -83,8 +83,10 @@ pub async fn show_bubble<R: Runtime>(
     box_x: f64,
     box_y: f64,
     text: String,
+    // 可选配图（**相对素材路径**，如 `memes/xxx.png`）：碎碎念/对话开了配图时由宿主算出
+    image: Option<String>,
 ) -> Result<(), String> {
-    let request = crate::bubble::BubbleRequest { anchor_x, anchor_y, box_x, box_y, text };
+    let request = crate::bubble::BubbleRequest { anchor_x, anchor_y, box_x, box_y, text, image };
     crate::bubble::show(&app, &label, &request)
 }
 
@@ -679,6 +681,8 @@ pub struct LlmStatusDto {
     pub memory_path: String,
     /// 该 provider 是否需要 key（ollama 不需要）
     pub needs_key: bool,
+    /// 本机**可用**的表情包数量（图真在 + 描述非空），设置页用它告诉用户"配图能不能用"
+    pub memes_count: usize,
 }
 
 /// 记忆里的一条消息
@@ -709,7 +713,8 @@ fn llm_status_of(app_data_dir: &std::path::Path, config: &crate::config::AppConf
         key_hint: key.as_deref().map(crate::secret::mask),
         key_path: store.path().display().to_string(),
         memory_path: crate::memory::MemoryStore::new(app_data_dir).path().display().to_string(),
-        needs_key: crate::config::provider_needs_key(config.llm.provider.trim()),
+needs_key: crate::config::provider_needs_key(config.llm.provider.trim()),
+        memes_count: crate::memes::pool(config, app_data_dir).len(),
     }
 }
 
@@ -750,7 +755,8 @@ pub async fn llm_selftest(app: AppHandle) -> Result<String, LlmErrorDto> {
         };
         (config, state.app_data_dir.clone(), name)
     };
-    crate::llm::selftest(&config.llm, &app_data_dir, &name).map_err(LlmErrorDto::from)
+    let memes = crate::memes::pool(&config, &app_data_dir);
+    crate::llm::selftest(&config.llm, &app_data_dir, &name, &memes).map_err(LlmErrorDto::from)
 }
 
 /// 现在就让某只宠物说一句（设置窗口的按钮 / 手动验证）
@@ -780,11 +786,14 @@ pub async fn llm_chat(app: AppHandle, label: String, text: String) -> Result<Str
     if !config.llm.chat_ready() {
         return Err(LlmErrorDto::from(crate::llm::Failure::Disabled));
     }
-    let reply = crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, &text)
+    let memes = crate::memes::pool(&config, &app_data_dir);
+    let generation = crate::llm::chat(&config.llm, &app_data_dir, &pet_id, &name, &text, &memes)
         .map_err(LlmErrorDto::from)?;
-    // 回复交给宠物页的气泡（与碎碎念同一条链路）：输入框里不堆聊天记录，宠物"说出来"
-    crate::whisper::emit(&app, &label, &reply);
-    Ok(reply)
+    // 回复交给宠物页的气泡（与碎碎念同一条链路）：输入框里不堆聊天记录，宠物"说出来"；
+    // 配图（如果模型选了）一起下发
+    let image = generation.meme.as_ref().map(|meme| crate::memes::asset_path(&meme.name));
+    crate::whisper::emit(&app, &label, &generation.text, image.as_deref());
+    Ok(generation.text)
 }
 
 /// 打开某只宠物的对话输入窗（托盘/右键菜单调用）

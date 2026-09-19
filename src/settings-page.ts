@@ -114,8 +114,8 @@ interface LlmConfig {
   model: string;
   temperature: number;
   timeoutSec: number;
-  whisper: { enabled: boolean; intervalSec: number; persona: string };
-  chat: { enabled: boolean; memoryRounds: number };
+  whisper: { enabled: boolean; intervalSec: number; persona: string; imageEnabled: boolean };
+  chat: { enabled: boolean; memoryRounds: number; imageEnabled: boolean };
 }
 
 /** `llm_status` 的返回（密钥只以打码形态出现） */
@@ -136,6 +136,8 @@ interface LlmStatus {
   keyPath: string;
   memoryPath: string;
   needsKey: boolean;
+  /** 本机可用表情包数量（图真在 + 描述非空）；为 0 时配图开关禁用 */
+  memesCount: number;
 }
 
 /** AI 命令的结构化失败（reason 用于分支，message 用于显示） */
@@ -358,10 +360,20 @@ function selectInput<T extends string>(
 }
 
 /** 一行"勾选 + 说明"（横排！这一块的旧实现被挤成竖排文字，是用户说的"杂乱"之一） */
-function checkRow(checked: boolean, label: string, hint: string | undefined, onChange: (next: boolean) => void): HTMLElement {
+function checkRow(
+  checked: boolean,
+  label: string,
+  hint: string | undefined,
+  onChange: (next: boolean) => void,
+  // 禁用（如"一张表情包都没有"时的配图开关）：勾了也不会生效的东西，就不该让人勾
+  disabled = false,
+): HTMLElement {
   const row = el('div', 'check-row');
   const wrap = el('label');
-  wrap.appendChild(checkbox(checked, onChange));
+  const input = checkbox(checked, onChange);
+  input.disabled = disabled;
+  if (disabled) row.style.opacity = '0.55';
+  wrap.appendChild(input);
   const text = el('span');
   text.appendChild(el('strong', undefined, label));
   if (hint) {
@@ -844,6 +856,36 @@ function renderAiPage(): HTMLElement {
       markDirty();
       render();
     }),
+  );
+  // 配图（M3）：一张表情包都没有时把开关置灰并说明原因——
+  // 比"打开了却永远不配图"清楚得多（素材要用 import-animations.ps1 -All 导入）
+  const memesCount = llmStatus?.memesCount ?? 0;
+  const poolHint = `本机有 ${memesCount} 张表情包（数据目录 memes/，用 scripts\\import-animations.ps1 -All 导入）`;
+  toggles.appendChild(
+    checkRow(
+      llm.whisper.imageEnabled,
+      '碎碎念配图',
+      `每次随机抽一张一起显示 · ${poolHint}`,
+      (next) => {
+        llm.whisper.imageEnabled = next;
+        markDirty();
+        render();
+      },
+      memesCount === 0,
+    ),
+  );
+  toggles.appendChild(
+    checkRow(
+      llm.chat.imageEnabled,
+      '对话配图',
+      `把清单交给模型按语境挑 · ${poolHint}`,
+      (next) => {
+        llm.chat.imageEnabled = next;
+        markDirty();
+        render();
+      },
+      memesCount === 0,
+    ),
   );
   intro.appendChild(toggles);
   host.appendChild(intro);

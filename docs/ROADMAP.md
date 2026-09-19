@@ -109,7 +109,9 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
 - [x] **默认零联网 + 设置页开关/自检**：原始配置启动零请求；「AI」页可配 provider/模型/Key 并一键自检
 - [x] **对话**：宠物角上的单行输入窗 + `memory.json` 全量记忆（最近 N 轮进上下文）+ 回复走气泡
       —— 输入窗是本项目唯一的**可聚焦**辅助窗（要打字），托盘与右键菜单各有一个入口
-- [ ] **表情包配图**：碎碎念随机抽 / 对话按语境选（需要把 `assets/memes` 一并导入）
+- [x] **表情包配图**：碎碎念随机抽（描述注入提示词）/ 对话按语境选（末尾 `[图:名称]` 标记，只在池内命中才采纳）、
+      气泡支持配图；素材由 `import-animations.ps1 -All` 导入，配置表随内置模板回落
+      —— 见 `VERIFICATION.md` 第 15 节（含两个静默 bug 的复盘）
 - [ ] **余额**：DeepSeek + OpenCode + 自定义接口（上游 `host/balance.ts` 的 provider 表可复用）
 - [x] **真实 provider 联调**：DeepSeek `deepseek-chat` 下自检与对话各一次真跑通过；
       并因此修掉一个 mock 验不出的致命坑（https 传输层 panic，见 `VERIFICATION.md` 13.11）

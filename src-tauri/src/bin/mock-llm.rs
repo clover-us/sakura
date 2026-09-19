@@ -125,8 +125,15 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
         thread::sleep(Duration::from_secs(6));
     }
 
-    // 正常回复：把最后一条 user 内容回显进去，便于一眼看出"记忆/上下文有没有带上"
-    let reply = format!("（mock 回复）收到 {} 条消息", count_messages(&body_text));
+    // 正常回复：把消息条数回显进去，便于一眼看出"记忆/上下文有没有带上"。
+    //
+    // 若请求里带了**配图指令**（`[配图]`），就在回复末尾附一个 `[图:名称]` 标记，
+    // 名称从指令清单里挑第一条——这样"选图 → 解析 → 剥标记 → 气泡配图"的链路能被真实走一遍。
+    let marker = pick_marker_from_instruction(&body_text);
+    let reply = match &marker {
+        Some(name) => format!("（mock 回复）收到 {} 条消息\n[图:{}]", count_messages(&body_text), name),
+        None => format!("（mock 回复）收到 {} 条消息", count_messages(&body_text)),
+    };
     let payload = serde_json::json!({
         "id": "mock-1",
         "object": "chat.completion",
@@ -135,6 +142,22 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
         "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
     });
     respond(&mut stream, 200, "application/json", &payload.to_string())
+}
+
+/// 从配图指令的清单里挑第一条名称（`- 名称：描述`）
+fn pick_marker_from_instruction(body: &str) -> Option<String> {
+    if !body.contains("[配图]") {
+        return None;
+    }
+    for line in body.split("\\n") {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("- ") {
+            if let Some((name, _)) = rest.split_once('：') {
+                return Some(name.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn count_messages(body: &str) -> usize {

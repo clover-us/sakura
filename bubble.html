@@ -74,6 +74,21 @@
         border-top-color: rgba(255, 255, 255, 0.97);
         border-bottom: none;
       }
+      /*
+       * 配图：等比缩到 168×168（与 Rust 侧 estimate::IMAGE_SIZE 一致，不一致会被窗口裁掉），
+       * 圆角跟随气泡；文字在图上方，读起来像"说一句 + 配张图"。
+       */
+      #bubble-image {
+        display: block;
+        width: 168px;
+        height: 168px;
+        margin: 0 auto 8px;
+        border-radius: 10px;
+        object-fit: contain;
+      }
+      #bubble-image[hidden] {
+        display: none;
+      }
       #bubble.is-on {
         opacity: 1;
         transform: none;
@@ -87,6 +102,14 @@
   </head>
   <body>
     <!-- 气泡内容由宿主经 `eval` 注入（见 bubble.rs::show_bubble），此处只留容器 -->
-    <div id="bubble"><span id="bubble-text"></span></div>
+<!--
+      气泡内容由宿主经 `eval` 注入（见 bubble.rs::bubble_script），此处只留容器。
+      配图（表情包）用 `<img>`：**默认 hidden**，宿主每次注入时显式设置 src 或清掉它——
+      窗口是复用的，不清就会把上一张图留在这次的气泡里。
+    -->
+    <div id="bubble">
+      <img id="bubble-image" alt="" hidden />
+      <span id="bubble-text"></span>
+    </div>
   </body>
 </html>
