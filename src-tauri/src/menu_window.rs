@@ -199,6 +199,15 @@ pub fn is_visible<R: Runtime>(app: &AppHandle<R>, pet_label: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 收掉**所有**宠物的右键菜单（托盘菜单弹出前调用：两个弹出层不能同时挂着）
+pub fn hide_all<R: Runtime>(app: &AppHandle<R>) {
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(MENU_LABEL_PREFIX) {
+            let _ = window.hide();
+        }
+    }
+}
+
 /// 光标轮询里调用：菜单开着时，**在菜单矩形外按下鼠标**就关掉它。
 ///
 /// 为什么由宿主判定而不是页面：菜单窗是不可聚焦的（`focusable(false)`），

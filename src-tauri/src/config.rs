@@ -89,6 +89,18 @@ pub struct PetEntry {
     pub click: String,
     /// 初始位置
     pub position: PositionConfig,
+    /// **单独覆盖**动画池（留空/不写 = 跟随全局 `animations`）
+    ///
+    /// 为什么允许每只宠物一套：桌宠的"行为"本质上是**这只宠物**的属性——
+    /// 小猫该有小猫的动作池、鲸鱼该有鲸鱼的；全局那份改叫"默认值"，
+    /// 新增宠物不用重新配一遍。语义是"整体覆盖"而不是"逐字段合并"：
+    /// 合并看起来更聪明，但会出现"我明明删掉了某个动作，它还在播"这种查不清的情况
+    /// （删除与"未设置"在合并语义下无法区分），所以这里刻意选整段覆盖。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animations: Option<AnimationsConfig>,
+    /// **单独覆盖**动画链权重（留空 = 跟随全局 `animationWeights`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation_weights: Option<AnimationWeights>,
 }
 
 /// 移动动作：一个动作名 + 可选覆盖参数（未写字段取 moves.default）
@@ -224,40 +236,75 @@ impl AppConfig {
 
     /// 校验动画池的自洽性（**不需要素材清单**就能判定的部分）。
     ///
-    /// 与"素材是否存在"分开是刻意的：素材缺失属于环境问题（用户还没导入素材集），
-    /// 应当在启动后用 [`validate_animation_assets`] 以**警告**形式提示，而不是让应用起不来。
+    /// 全局那份与每只宠物的覆盖都要过一遍：覆盖段写坏了同样会让应用起不来，
+    /// 而错误信息里必须能看出"是全局还是哪只宠物"的池子有问题。
     pub fn validate_animations(&self) -> Result<(), String> {
-        let anim = &self.animations;
-        if anim.idle.is_empty() {
-            return Err("animations.idle 不能为空：至少需要一个待机动画".to_string());
-        }
-        if anim.clicks.is_empty() {
-            return Err("animations.clicks 不能为空：至少需要一个点击回应动画".to_string());
-        }
-        for category in &anim.categories {
-            if category.id.trim().is_empty() {
-                return Err("animations.categories[].id 不能为空".to_string());
-            }
-            if !(category.weight.is_finite() && category.weight >= 0.0) {
-                return Err(format!("分类 {} 的 weight 必须为非负数", category.id));
-            }
-            if category.actions.is_empty() {
-                return Err(format!("分类 {} 的 actions 不能为空", category.id));
-            }
-        }
-        // 顶层权重与分类权重的关系：三档占比 + 分类占比必须能覆盖 100
-        // （不足 100 时剩余概率会被 rollKind 归入 action，语义上不算错误，但通常是配错了）
-        let top = self.animation_weights.idle + self.animation_weights.turn + self.animation_weights.move_;
-        if !(top.is_finite() && (0.0..=100.0).contains(&top)) {
-            return Err(format!("animationWeights 的 idle+turn+move 必须在 0~100 之间，当前为 {top}"));
-        }
-        for (key, slots) in &anim.events {
-            if slots.is_empty() {
-                return Err(format!("animations.events.{key} 不能为空数组"));
+        validate_animation_pool(&self.animations, &self.animation_weights, "全局")?;
+        for (index, pet) in self.pets.iter().enumerate() {
+            let anim = self.effective_animations(pet);
+            let weights = self.effective_weights(pet);
+            // 只有在"这只宠物确实自定义了"时才单独校验：否则同一份全局池会被重复报错
+            if pet.animations.is_some() || pet.animation_weights.is_some() {
+                let where_ = format!("宠物 {}（pets[{index}]）", if pet.name.trim().is_empty() { pet.id.as_str() } else { pet.name.as_str() });
+                validate_animation_pool(&anim, &weights, &where_)?;
             }
         }
         Ok(())
     }
+
+    /// 取某只宠物**实际生效**的动画池（没写覆盖就用全局）
+    pub fn effective_animations(&self, pet: &PetEntry) -> AnimationsConfig {
+        pet.animations.clone().unwrap_or_else(|| self.animations.clone())
+    }
+
+    /// 取某只宠物**实际生效**的动画链权重（没写覆盖就用全局）
+    pub fn effective_weights(&self, pet: &PetEntry) -> AnimationWeights {
+        pet.animation_weights.unwrap_or(self.animation_weights)
+    }
+
+    /// 这只宠物是否自定义了行为（覆盖了动画池或权重）——UI 与日志都要用
+    pub fn pet_has_custom_behaviour(pet: &PetEntry) -> bool {
+        pet.animations.is_some() || pet.animation_weights.is_some()
+    }
+}
+
+/// 校验一份动画池 + 权重；`where_` 是给用户看的作用域（"全局" / "宠物 小鲸鱼"）
+fn validate_animation_pool(
+    anim: &AnimationsConfig,
+    weights: &AnimationWeights,
+    where_: &str,
+) -> Result<(), String> {
+    if anim.idle.is_empty() {
+        return Err(format!("{where_}：animations.idle 不能为空（至少需要一个待机动画）"));
+    }
+    if anim.clicks.is_empty() {
+        return Err(format!("{where_}：animations.clicks 不能为空（至少需要一个点击回应动画）"));
+    }
+    for category in &anim.categories {
+        if category.id.trim().is_empty() {
+            return Err(format!("{where_}：animations.categories[].id 不能为空"));
+        }
+        if !(category.weight.is_finite() && category.weight >= 0.0) {
+            return Err(format!("{where_}：分类 {} 的 weight 必须为非负数", category.id));
+        }
+        if category.actions.is_empty() {
+            return Err(format!("{where_}：分类 {} 的 actions 不能为空", category.id));
+        }
+    }
+    // 顶层权重与分类权重的关系：三档占比 + 分类占比必须能覆盖 100
+    // （不足 100 时剩余概率会被 rollKind 归入 action，语义上不算错误，但通常是配错了）
+    let top = weights.idle + weights.turn + weights.move_;
+    if !(top.is_finite() && (0.0..=100.0).contains(&top)) {
+        return Err(format!(
+            "{where_}：animationWeights 的 idle+turn+move 必须在 0~100 之间，当前为 {top}"
+        ));
+    }
+    for (key, slots) in &anim.events {
+        if slots.is_empty() {
+            return Err(format!("{where_}：animations.events.{key} 不能为空数组"));
+        }
+    }
+    Ok(())
 }
 
 /// 配置目录：`<应用数据目录>/`（由调用方传入，便于测试时注入临时目录）
@@ -322,42 +369,63 @@ pub fn validate_animation_assets(config: &AppConfig, available: &[String]) -> Ve
         }
     }
 
-    for name in &config.animations.idle {
-        check(&mut warnings, name, "animations.idle", available);
-    }
-    for name in &config.animations.turn {
-        check(&mut warnings, name, "animations.turn", available);
-    }
-    for name in &config.animations.drag {
-        check(&mut warnings, name, "animations.drag", available);
-    }
-    for name in &config.animations.clicks {
-        check(&mut warnings, name, "animations.clicks", available);
-    }
-    for spec in &config.animations.moves.actions {
-        check(&mut warnings, &spec.name, "animations.moves.actions", available);
-    }
-    for category in &config.animations.categories {
-        let origin = format!("分类 {}", category.id);
-        for name in &category.actions {
-            check(&mut warnings, name, &origin, available);
+    /// 一份池子逐项查素材
+    fn check_pool(warnings: &mut Vec<String>, animations: &AnimationsConfig, scope: &str, available: &[String]) {
+        let check = |warnings: &mut Vec<String>, name: &str, origin: &str| {
+            check(warnings, name, origin, available);
+        };
+        for name in &animations.idle {
+            check(warnings, name, &format!("{scope} animations.idle"));
         }
-    }
-    for (event, slots) in &config.animations.events {
-        let origin = format!("events.{event}");
-        for slot in slots {
-            match slot {
-                serde_json::Value::String(name) => check(&mut warnings, name, &origin, available),
-                serde_json::Value::Array(names) => {
-                    for name in names {
-                        if let Some(text) = name.as_str() {
-                            check(&mut warnings, text, &origin, available);
-                        }
-                    }
-                }
-                _ => warnings.push(format!("events.{event} 的档位取值既不是字符串也不是数组")),
+        for name in &animations.turn {
+            check(warnings, name, &format!("{scope} animations.turn"));
+        }
+        for name in &animations.drag {
+            check(warnings, name, &format!("{scope} animations.drag"));
+        }
+        for name in &animations.clicks {
+            check(warnings, name, &format!("{scope} animations.clicks"));
+        }
+        for spec in &animations.moves.actions {
+            check(warnings, &spec.name, &format!("{scope} animations.moves.actions"));
+        }
+        for category in &animations.categories {
+            let origin = format!("{scope} 分类 {}", category.id);
+            for name in &category.actions {
+                check(warnings, name, &origin);
             }
         }
+        for (event, slots) in &animations.events {
+            let origin = format!("{scope} events.{event}");
+            for slot in slots {
+                match slot {
+                    serde_json::Value::String(name) => check(warnings, name, &origin),
+                    serde_json::Value::Array(names) => {
+                        for name in names {
+                            if let Some(text) = name.as_str() {
+                                check(warnings, text, &origin);
+                            }
+                        }
+                    }
+                    _ => warnings.push(format!("{origin} 的档位取值既不是字符串也不是数组")),
+                }
+            }
+        }
+    }
+
+    // 全局池（**只在有宠物真的跟随全局时才查**，否则同一份池会被查 N 遍、警告刷屏）
+    let anyone_uses_global = config.pets.iter().any(|pet| !AppConfig::pet_has_custom_behaviour(pet));
+    if anyone_uses_global {
+        check_pool(&mut warnings, &config.animations, "全局", available);
+    }
+    // 每只宠物的覆盖池：错误信息里带上宠物标识，用户一眼知道该改哪儿
+    for pet in &config.pets {
+        if !AppConfig::pet_has_custom_behaviour(pet) {
+            continue;
+        }
+        let label = if pet.name.trim().is_empty() { pet.id.clone() } else { pet.name.clone() };
+        let scope = format!("宠物 {label} 自带的");
+        check_pool(&mut warnings, &config.effective_animations(pet), &scope, available);
     }
     warnings
 }
@@ -521,17 +589,21 @@ pub fn save_config(app_data_dir: &Path, config: &AppConfig) -> Result<SaveConfig
 ///
 /// `pets[].idle` / `pets[].click` 仍保留为可选字段：写了就用它做首帧 / 单次点击动画。
 pub struct PetAnimationDefaults {
-    /// 待机动画（`animations.idle` 的第一个）
+    /// 待机动画（该宠物**实际生效**的池里的第一个）
     pub idle: String,
-    /// 点击回应动画（`animations.clicks` 的第一个）
+    /// 点击回应动画（同上）
     pub click: String,
 }
 
-/// 从动画池派生默认动作名
-pub fn pet_animation_defaults(config: &AppConfig) -> PetAnimationDefaults {
+/// 从"某只宠物实际生效的动画池"派生默认动作名
+///
+/// 注意必须传**宠物**而不是全局配置：每只宠物可以有自己的一套池，
+/// 用全局池派生会让"换了池的宠物"首帧仍然是全局池里的动画。
+pub fn pet_animation_defaults(pet: &PetEntry, config: &AppConfig) -> PetAnimationDefaults {
+    let animations = config.effective_animations(pet);
     PetAnimationDefaults {
-        idle: config.animations.idle.first().cloned().unwrap_or_default(),
-        click: config.animations.clicks.first().cloned().unwrap_or_default(),
+        idle: animations.idle.first().cloned().unwrap_or_default(),
+        click: animations.clicks.first().cloned().unwrap_or_default(),
     }
 }
 

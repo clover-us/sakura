@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>whale-pet 托盘菜单</title>
+    <style>
+      /*
+       * 自绘托盘菜单的样式。
+       *
+       * 约定：
+       *   - 整窗透明，只有卡片本体可见；窗口比卡片大一圈（四周 18px），
+       *     那一圈就是 box-shadow 的落脚处（否则阴影会被窗口边缘切掉）；
+       *   - **深浅色跟随系统**（prefers-color-scheme），与设置窗口同一套色板变量；
+       *   - 强调色用参考图里的粉玫瑰色（#ec6f9b 一族）：hover/选中/图标都靠它，
+       *     整个界面只有这一处彩色，视觉上才干净。
+       */
+      :root {
+        color-scheme: light dark;
+        --pad: 18px;
+        --panel: #ffffff;
+        --text: #23262d;
+        --muted: #8b909a;
+        --line: #ececf0;
+        --hover: #f7f5f7;
+        --accent: #ec6f9b;
+        --accent-soft: #fdeef4;
+        --danger: #e5534b;
+        --shadow: 0 14px 34px rgba(28, 20, 30, 0.16), 0 2px 8px rgba(28, 20, 30, 0.08);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --panel: #24262c;
+          --text: #e8e9ee;
+          --muted: #9096a1;
+          --line: #33363e;
+          --hover: #2d3038;
+          --accent: #ff86ae;
+          --accent-soft: #3a2a33;
+          --danger: #ff7b72;
+          --shadow: 0 14px 34px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+        font: 13px/1.5 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+        color: var(--text);
+      }
+      body {
+        padding: var(--pad);
+      }
+      .panel {
+        width: 272px;
+        border-radius: 12px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      .view[hidden] {
+        display: none;
+      }
+
+      /* ---- 顶部：图标 + 标题 + 副标题 ---- */
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px 10px;
+      }
+      .logo {
+        width: 28px;
+        height: 28px;
+        flex: none;
+        border-radius: 9px;
+        background: linear-gradient(160deg, #ffc2db, #f8749f);
+        display: grid;
+        place-items: center;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+      }
+      .head-text {
+        min-width: 0;
+      }
+      .head-text strong {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+      .head-text span {
+        display: block;
+        font-size: 11.5px;
+        color: var(--muted);
+      }
+
+      /* ---- 菜单项 ---- */
+      .items {
+        padding: 2px 6px 8px;
+      }
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .item:hover {
+        background: var(--hover);
+      }
+      .item:hover .label {
+        color: var(--accent);
+      }
+      .item .ic {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        color: var(--muted);
+      }
+      .item:hover .ic {
+        color: var(--accent);
+      }
+      .item .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .item .chev {
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1;
+      }
+      .item .badge {
+        font-size: 11px;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-radius: 999px;
+        padding: 1px 7px;
+      }
+      .item.danger:hover {
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
+      }
+      .item.danger:hover .label,
+      .item.danger:hover .ic {
+        color: var(--danger);
+      }
+      .sep {
+        height: 1px;
+        margin: 6px 12px;
+        background: var(--line);
+      }
+
+      /* ---- 动作点播视图 ---- */
+      .picker-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 10px 8px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      .back {
+        width: 26px;
+        height: 26px;
+        flex: none;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .back:hover {
+        background: var(--hover);
+        color: var(--accent);
+      }
+      .picker-title {
+        flex: 1;
+        font-weight: 600;
+      }
+      .pets {
+        display: flex;
+        gap: 6px;
+        padding: 8px 12px 4px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 12px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .chip:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .chip[data-active='true'] {
+        background: var(--accent-soft);
+        border-color: transparent;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .list {
+        max-height: 372px;
+        overflow-y: auto;
+        padding: 4px 6px 8px;
+      }
+      .list::-webkit-scrollbar {
+        width: 8px;
+      }
+      .list::-webkit-scrollbar-thumb {
+        background: var(--line);
+        border-radius: 8px;
+      }
+      .group {
+        padding: 8px 10px 3px;
+        font-size: 11.5px;
+        color: var(--muted);
+      }
+      .anim {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 7px;
+        cursor: pointer;
+      }
+      .anim:hover {
+        background: var(--hover);
+        color: var(--accent);
+      }
+      .anim .missing {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .empty {
+        padding: 14px 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .toast {
+        margin: 0 12px 10px;
+        padding: 7px 10px;
+        border-radius: 8px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 12px;
+      }
+      .toast[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 面板结构由 src/tray-menu-page.ts 渲染（图标也用内联 SVG 生成，见那里） -->
+    <div class="panel" id="panel"></div>
+    <script type="module" src="/src/tray-menu-page.ts"></script>
+  </body>
+</html>

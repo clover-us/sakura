@@ -1,37 +1,37 @@
 /**
- * 设置窗口的前端入口（M2）。
+ * 设置窗口的前端（M2 外观升级版：左侧导航 + 每只宠物独立页面 + 跟随系统深浅色）。
  *
- * ## 这一页与桌宠那三个页面最大的不同
+ * ## 这一版解决了什么
  *
- * 它是**普通界面**：不透明、可聚焦、整窗吃鼠标。桌宠页面要考虑的穿透/坐标/首帧延迟
- * 在这里都不存在——设置页只管"把配置读出来、改、存回去"。
+ * 旧版是"一长条表单往下滚"，用户的原话是"不好看、很杂乱、没有导航栏"。具体问题有三类：
+ *   1. **没有信息层级**：宠物、物理、动画池挤在同一个滚动流里；
+ *   2. **布局 bug**：勾选项被塞进窄网格单元，中文被挤成一列一个字（截图里一眼能看到）；
+ *   3. **行为归属不清**：动画池是全局的，但用户在直觉上认为"每个宠物该有自己的行为"。
  *
- * ## 数据流（刻意设计成"整份配置进出"）
+ * 现在：左侧竖导航（宠物逐个列出来 + 通用分组），右侧一次只渲染**一个页面**，
+ * 底部常驻状态栏与保存按钮；宠物页里有"行为：跟随全局 / 单独设置"的显式选择。
+ *
+ * ## 数据流（仍然是"整份配置进出"）
  *
  * ```text
- * get_settings ──► AppConfig（原样持有）
- *                     │  用户改哪几个字段就动哪几个，其余字段（如 animations.events）原封不动
+ * get_settings ─► AppConfig（原样持有，只改用得上的字段，其余原封带回）
  *                     ▼
- * save_settings(config) ──► 校验 → 备份 + 原子写盘 → 立即重建宠物窗
+ * save_settings(config) ─► 校验 → 备份 + 原子写 → 立即重建宠物窗
  * ```
  *
- * **不给每个字段建 TS 类型映射表、也不逐字段回传**：Rust 侧以后加字段，
- * 这一页不需要跟着改；用户手改过的冷门字段（events、moves 的 params）也不会被抹掉。
- * 页面只声明它**会读写**的那些字段（见下面的接口），其余按 `unknown` 原样带着走。
+ * 不给每个字段建映射表、也不逐字段回传：Rust 侧加字段这一页不用跟着改，
+ * 用户手改过的冷门字段（events、moves 的 params）也不会被抹掉。
  *
- * ## 校验在哪
- *
- * 只在 Rust 侧（`AppConfig::validate`）。前端不重复实现一套规则——否则两边迟早不一致，
- * 而"前端放过、后端拒绝"至少还能给出确切原因，"前端拒绝、后端其实允许"则会白白挡住用户。
+ * 校验只在 Rust 侧（`AppConfig::validate`）：前端不重复实现一套规则，
+ * 否则两边迟早不一致。
  */
 import { petLog, petLogError, setLogLabel } from './bridge/log.ts';
 import { invoke } from './bridge/tauri.ts';
 
 // ============================================================================
-//  与 Rust `AppConfig` 同构的类型（只声明本页读写得到的字段）
+//  与 Rust 侧同构的类型（只声明本页读写得到的字段）
 // ============================================================================
 
-/** 角落（Rust 侧是 kebab-case 枚举） */
 type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 interface PositionConfig {
@@ -40,14 +40,34 @@ interface PositionConfig {
   marginY: number;
 }
 
+interface AnimationsConfig {
+  idle: string[];
+  turn: string[];
+  drag: string[];
+  clicks: string[];
+  moves: MovesConfig;
+  categories: CategoryConfig[];
+  /** 事件动画：本页不改（原样带回） */
+  events?: Record<string, unknown>;
+}
+
+interface AnimationWeights {
+  idle: number;
+  turn: number;
+  move: number;
+}
+
 interface PetEntry {
   id: string;
   name: string;
   size: number;
-  /** 留空 = 从动画池派生（本页不编辑，原样带着走） */
   idle: string;
   click: string;
   position: PositionConfig;
+  /** 单独覆盖动画池（不设 = 跟随全局） */
+  animations?: AnimationsConfig | null;
+  /** 单独覆盖动画链权重（不设 = 跟随全局） */
+  animationWeights?: AnimationWeights | null;
 }
 
 interface PhysicsParams {
@@ -76,23 +96,6 @@ interface CategoryConfig {
   noMirror?: boolean;
 }
 
-interface AnimationsConfig {
-  idle: string[];
-  turn: string[];
-  drag: string[];
-  clicks: string[];
-  moves: MovesConfig;
-  categories: CategoryConfig[];
-  /** 事件动画：本页不改（原样带回） */
-  events?: Record<string, unknown>;
-}
-
-interface AnimationWeights {
-  idle: number;
-  turn: number;
-  move: number;
-}
-
 interface AppConfig {
   schemaVersion: number;
   physics: PhysicsParams;
@@ -117,15 +120,18 @@ interface SaveSettingsDto {
 }
 
 // ============================================================================
-//  页面状态
+//  状态
 // ============================================================================
 
-/** 从宿主取回的配置（保存时原样回传；未加载成功前为 null） */
 let config: AppConfig | null = null;
-/** 素材目录里可用的动画名（下拉候选） */
 let available: string[] = [];
-/** 防止未加载完就允许保存 */
 let loaded = false;
+let autostart = false;
+let appDataDir = '';
+let configPath = '';
+/** 当前视图：`pet:<下标>` / `physics` / `animations` / `system` / `about` */
+let view = 'pet:0';
+let dirty = false;
 
 const CORNERS: Array<{ value: Corner; label: string }> = [
   { value: 'top-left', label: '左上' },
@@ -134,8 +140,20 @@ const CORNERS: Array<{ value: Corner; label: string }> = [
   { value: 'bottom-right', label: '右下' },
 ];
 
+/** 与 exe 图标同一造型的简化鲸鱼（内联 SVG，避免引外部图片） */
+const WHALE_LOGO = `
+<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+  <ellipse cx="13.5" cy="17" rx="8.4" ry="6.6" fill="#fff"/>
+  <ellipse cx="24.5" cy="14.2" rx="4.6" ry="1.9" fill="#fff" transform="rotate(-19 24.5 14.2)"/>
+  <ellipse cx="24.5" cy="19.6" rx="4.6" ry="1.9" fill="#fff" transform="rotate(19 24.5 19.6)"/>
+  <ellipse cx="18.6" cy="17" rx="2.6" ry="1.8" fill="#fff"/>
+  <circle cx="9.6" cy="15.6" r="1.5" fill="#23304a"/>
+  <circle cx="9.6" cy="15.6" r="0.55" fill="#fff"/>
+  <ellipse cx="7.4" cy="19.2" rx="1.9" ry="1.2" fill="#ff9ec0"/>
+</svg>`;
+
 // ============================================================================
-//  DOM 小工具（没有引入任何框架：这一页只有几百个元素，手写足够且零依赖）
+//  DOM 工具
 // ============================================================================
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -155,18 +173,35 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function field(labelText: string, control: HTMLElement): HTMLLabelElement {
-  const label = el('label', 'field');
-  label.appendChild(el('span', undefined, labelText));
-  label.appendChild(control);
-  return label;
+function field(labelText: string, control: HTMLElement, hint?: string): HTMLElement {
+  const wrap = el('label', 'field');
+  wrap.appendChild(el('span', undefined, labelText));
+  wrap.appendChild(control);
+  // 说明位**恒定存在**（没有就留空）：这样同一行里每个字段的结构一致，
+  // 输入框的纵向位置不会被"某个字段多一行说明"顶歪
+  wrap.appendChild(el('span', 'inline-hint', hint ?? ''));
+  return wrap;
 }
 
-/** 文本输入（带素材候选下拉） */
-function textInput(value: string, onChange: (next: string) => void, withSuggestions = false): HTMLInputElement {
+function card(title: string, desc?: string): HTMLElement {
+  const node = el('section', 'card');
+  node.appendChild(el('h3', undefined, title));
+  if (desc) node.appendChild(el('p', 'desc', desc));
+  return node;
+}
+
+function button(text: string, className?: string, onClick?: () => void): HTMLButtonElement {
+  const node = el('button', className, text);
+  node.type = 'button';
+  if (onClick) node.addEventListener('click', onClick);
+  return node;
+}
+
+function textInput(value: string, onChange: (next: string) => void, withSuggestions = false, placeholder?: string): HTMLInputElement {
   const input = el('input');
   input.type = 'text';
   input.value = value;
+  if (placeholder) input.placeholder = placeholder;
   if (withSuggestions) input.setAttribute('list', 'anim-options');
   input.addEventListener('input', () => {
     onChange(input.value);
@@ -175,7 +210,6 @@ function textInput(value: string, onChange: (next: string) => void, withSuggesti
   return input;
 }
 
-/** 数字输入（整数开关决定是否取整） */
 function numberInput(
   value: number,
   onChange: (next: number) => void,
@@ -189,7 +223,7 @@ function numberInput(
   input.step = String(options.step ?? (options.integer ? 1 : 'any'));
   input.addEventListener('input', () => {
     const parsed = Number(input.value);
-    // 空串 / 非数字时**不写回**：否则用户删到一半就被塞进一个 0，光标还会跳
+    // 空串/半截输入不写回：否则用户删到一半就被塞进 0，光标还会跳
     if (!Number.isFinite(parsed)) return;
     onChange(options.integer ? Math.round(parsed) : parsed);
     markDirty();
@@ -197,7 +231,7 @@ function numberInput(
   return input;
 }
 
-function checkboxInput(checked: boolean, onChange: (next: boolean) => void): HTMLInputElement {
+function checkbox(checked: boolean, onChange: (next: boolean) => void): HTMLInputElement {
   const input = el('input');
   input.type = 'checkbox';
   input.checked = checked;
@@ -227,45 +261,51 @@ function selectInput<T extends string>(
   return select;
 }
 
-function markDirty(): void {
-  if (loaded) document.body.classList.add('dirty');
+/** 一行"勾选 + 说明"（横排！这一块的旧实现被挤成竖排文字，是用户说的"杂乱"之一） */
+function checkRow(checked: boolean, label: string, hint: string | undefined, onChange: (next: boolean) => void): HTMLElement {
+  const row = el('div', 'check-row');
+  const wrap = el('label');
+  wrap.appendChild(checkbox(checked, onChange));
+  const text = el('span');
+  text.appendChild(el('strong', undefined, label));
+  if (hint) {
+    text.appendChild(el('span', 'hint', `　${hint}`));
+  }
+  wrap.appendChild(text);
+  row.appendChild(wrap);
+  return row;
 }
 
-/** 状态条：kind 为空表示普通提示 */
-function setStatus(kind: '' | 'ok' | 'error' | 'warn', text: string): void {
-  const box = byId('status');
+function markDirty(): void {
+  if (!loaded) return;
+  dirty = true;
+  document.body.dataset.dirty = '1';
+  byId('status-text').textContent = '有未保存的改动 —— 点右下角「保存并立即生效」';
+  byId('status-text').className = 'warn';
+}
+
+function showToast(message: string): void {
+  const toast = byId('toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  window.setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+function setStatus(kind: '' | 'ok' | 'warn' | 'error', text: string): void {
+  const box = byId('status-text');
   box.className = kind;
   box.textContent = text;
 }
 
 // ============================================================================
-//  渲染
+//  通用组件
 // ============================================================================
 
-/** 素材候选下拉：全局一个 datalist，所有动画名输入框共用 */
-function renderAnimOptions(): void {
-  const existing = document.getElementById('anim-options');
-  if (existing) existing.remove();
-  const datalist = el('datalist');
-  datalist.id = 'anim-options';
-  for (const name of available) {
-    const option = el('option');
-    option.value = name;
-    datalist.appendChild(option);
-  }
-  document.body.appendChild(datalist);
-}
-
-/**
- * 通用"字符串列表"编辑器（idle / turn / drag / clicks / 某个分类的动作都用它）。
- *
- * 增删后整页重渲染（结构变了，重渲染最省事也更不容易错）；
- * 逐字修改只改数组不重渲染，避免输入框失焦。
- */
+/** 字符串列表编辑器（各动画池、分类动作、移动动作都用它） */
 function listEditor(
   items: string[],
   onChange: (next: string[]) => void,
-  options: { placeholder?: string } = {},
+  options: { suggestions?: boolean; placeholder?: string; addLabel?: string } = {},
 ): HTMLElement {
   const wrap = el('div', 'list');
   items.forEach((value, index) => {
@@ -273,222 +313,604 @@ function listEditor(
     const input = textInput(value, (next) => {
       items[index] = next;
       onChange(items);
-    }, true);
-    if (options.placeholder) input.placeholder = options.placeholder;
+    }, options.suggestions !== false, options.placeholder);
     row.appendChild(input);
-    const remove = el('button', 'icon', '✕');
-    remove.type = 'button';
-    remove.title = '删除这一项';
-    remove.addEventListener('click', () => {
-      const next = items.slice();
-      next.splice(index, 1);
-      onChange(next);
-      markDirty();
-      render();
-    });
-    row.appendChild(remove);
+    row.appendChild(
+      (() => {
+        const remove = button('✕', 'ghost');
+        remove.title = '删除这一项';
+        remove.addEventListener('click', () => {
+          const next = items.slice();
+          next.splice(index, 1);
+          onChange(next);
+          render();
+        });
+        return remove;
+      })(),
+    );
     wrap.appendChild(row);
   });
-
-  const add = el('button', undefined, '＋ 添加一项');
-  add.type = 'button';
-  add.style.alignSelf = 'flex-start';
-  add.addEventListener('click', () => {
-    const next = items.slice();
-    next.push('');
-    onChange(next);
-    markDirty();
-    render();
-  });
-  wrap.appendChild(add);
+  wrap.appendChild(
+    button(options.addLabel ?? '＋ 添加一项', undefined, () => {
+      const next = items.slice();
+      next.push('');
+      onChange(next);
+      render();
+    }),
+  );
   return wrap;
 }
 
-function renderPets(container: HTMLElement, pets: PetEntry[]): void {
-  container.textContent = '';
-  pets.forEach((pet, index) => {
-    const card = el('div', 'pet-card');
+/** 动画池编辑器（全局默认值与"某只宠物的单独设置"共用同一套控件） */
+function poolEditor(animations: AnimationsConfig, options: { showWeights: boolean; weights?: AnimationWeights }): HTMLElement {
+  const host = el('div');
 
-    const head = el('div', 'pet-head');
-    head.appendChild(el('strong', undefined, `宠物 ${index + 1}：${pet.name || '(未命名)'}（窗口标签 pet-${pet.id || '?'}-${index}）`));
-    const remove = el('button', 'icon', '删除这只');
-    remove.type = 'button';
-    // 稳定的 id：排障探针要能"点中某一行的删除"（见 src-tauri/src/diagnostics.rs 的设置窗口探针）
-    remove.id = `btn-del-pet-${index}`;
-    remove.title = '从配置里移除这只宠物（保存后窗口关闭）';
-    remove.addEventListener('click', () => {
-      pets.splice(index, 1);
-      markDirty();
-      render();
-    });
-    head.appendChild(remove);
-    card.appendChild(head);
-
-    const grid = el('div', 'grid');
-    grid.appendChild(field('显示名', textInput(pet.name, (next) => { pet.name = next; }, false)));
-    grid.appendChild(field('ID（窗口标签用，不能含 / \\ : * ? " < > |）', textInput(pet.id, (next) => { pet.id = next; }, false)));
-    grid.appendChild(field('尺寸（64~2048 像素）', numberInput(pet.size, (next) => { pet.size = next; }, { min: 64, max: 2048 })));
-    grid.appendChild(field('初始角落', selectInput(pet.position.corner, CORNERS, (next) => { pet.position.corner = next; })));
-    grid.appendChild(field('边距 X（像素）', numberInput(pet.position.marginX, (next) => { pet.position.marginX = next; }, { integer: true })));
-    grid.appendChild(field('边距 Y（像素）', numberInput(pet.position.marginY, (next) => { pet.position.marginY = next; }, { integer: true })));
-    card.appendChild(grid);
-
-    container.appendChild(card);
-  });
-}
-
-function renderPhysics(container: HTMLElement, physics: PhysicsParams): void {
-  container.textContent = '';
-  container.appendChild(field('重力（px/s²，通常 2000）', numberInput(physics.gravity, (next) => { physics.gravity = next; }, { min: 0 })));
-  container.appendChild(field('恢复系数（0~1，撞击后保留的速度比例）', numberInput(physics.restitution, (next) => { physics.restitution = next; }, { min: 0, max: 1 })));
-  container.appendChild(field('地面摩擦（0~1，越大停得越快）', numberInput(physics.groundFriction, (next) => { physics.groundFriction = next; }, { min: 0, max: 1 })));
-  container.appendChild(field('抛掷力度（倍率，越大甩得越远）', numberInput(physics.throwPower, (next) => { physics.throwPower = next; }, { min: 0.01 })));
-
-  const checks = el('div');
-  checks.style.display = 'flex';
-  checks.style.alignItems = 'center';
-  const ceiling = el('label', 'check');
-  ceiling.appendChild(checkboxInput(physics.ceilingBounce, (next) => { physics.ceilingBounce = next; }));
-  ceiling.appendChild(el('span', undefined, '碰到屏幕顶部会反弹'));
-  checks.appendChild(ceiling);
-  const collision = el('label', 'check');
-  collision.appendChild(checkboxInput(physics.petCollision, (next) => { physics.petCollision = next; }));
-  collision.appendChild(el('span', undefined, '多只宠物之间碰撞（M1 规划中，当前不生效）'));
-  checks.appendChild(collision);
-  container.appendChild(field('开关', checks));
-}
-
-function renderPools(container: HTMLElement, animations: AnimationsConfig): void {
-  container.textContent = '';
   const pools: Array<{ key: 'idle' | 'turn' | 'drag' | 'clicks'; title: string; hint: string }> = [
-    { key: 'idle', title: '待机池（等概率抽）', hint: '' },
-    { key: 'turn', title: '转向池（必须都是"播完会翻转朝向"的动画）', hint: '' },
-    { key: 'drag', title: '拖拽池（"被无形抓起悬空"的姿势）', hint: '' },
-    { key: 'clicks', title: '点击回应池', hint: '' },
+    { key: 'idle', title: '待机池', hint: '等概率抽；第一个同时作为首帧' },
+    { key: 'turn', title: '转向池', hint: '必须都是"播完会翻转朝向"的动画' },
+    { key: 'drag', title: '拖拽池', hint: '"被无形抓起悬空"的姿势' },
+    { key: 'clicks', title: '点击回应池', hint: '点按时随机抽 1 个' },
   ];
   for (const pool of pools) {
-    const head = el('div', 'list-head');
+    const head = el('div', 'subhead');
     head.appendChild(el('strong', undefined, pool.title));
-    if (pool.hint) head.appendChild(el('span', 'hint', pool.hint));
-    container.appendChild(head);
-    container.appendChild(listEditor(animations[pool.key], (next) => { animations[pool.key] = next; }));
+    head.appendChild(el('span', 'hint', pool.hint));
+    host.appendChild(head);
+    host.appendChild(listEditor(animations[pool.key], (next) => {
+      animations[pool.key] = next;
+    }));
+  }
+
+  // ---- 随机动作分类 ----
+  const catHead = el('div', 'subhead');
+  catHead.appendChild(el('strong', undefined, '随机动作分类'));
+  catHead.appendChild(el('span', 'hint', 'weight 是出现权重；带文字、镜像会颠倒的勾上 noMirror'));
+  host.appendChild(catHead);
+
+  animations.categories.forEach((category, index) => {
+    const box = el('div', 'cat');
+    const head = el('div', 'cat-head');
+    head.appendChild(textInput(category.id, (next) => {
+      category.id = next;
+    }, false, '分类名'));
+    head.appendChild(numberInput(category.weight, (next) => {
+      category.weight = next;
+    }, { min: 0 }));
+    const mirror = el('label', 'check-row');
+    mirror.style.padding = '4px 8px';
+    mirror.appendChild(checkbox(category.noMirror === true, (next) => {
+      category.noMirror = next;
+    }));
+    mirror.appendChild(el('span', undefined, '镜像会颠倒'));
+    head.appendChild(mirror);
+    head.appendChild(
+      button('✕', 'ghost', () => {
+        animations.categories.splice(index, 1);
+        render();
+      }),
+    );
+    box.appendChild(head);
+    box.appendChild(el('div', 'subhead'));
+    box.appendChild(listEditor(category.actions, (next) => {
+      category.actions = next;
+    }, { placeholder: '动画名' }));
+    host.appendChild(box);
+  });
+  host.appendChild(
+    button('＋ 添加分类', undefined, () => {
+      animations.categories.push({
+        id: `新分类 ${animations.categories.length + 1}`,
+        weight: 10,
+        // actions 不能为空（Rust 侧校验会拒绝）：给一个真实存在的动画作为起点
+        actions: [available[0] ?? animations.idle[0] ?? ''],
+        noMirror: false,
+      });
+      markDirty();
+      render();
+    }),
+  );
+
+  // ---- 移动池 ----
+  const moveHead = el('div', 'subhead');
+  moveHead.appendChild(el('strong', undefined, '移动池'));
+  moveHead.appendChild(el('span', 'hint', '每项的参数覆盖（params）保持配置文件里的原值'));
+  host.appendChild(moveHead);
+  const moves = animations.moves;
+  const moveList = el('div', 'list');
+  moves.actions.forEach((spec, index) => {
+    const row = el('div', 'row');
+    row.appendChild(textInput(spec.name, (next) => {
+      spec.name = next;
+    }, true, '动画名'));
+    if (spec.params) {
+      const badge = el('span', 'pill muted', 'params');
+      badge.title = `该动作有参数覆盖：${JSON.stringify(spec.params)}`;
+      row.appendChild(badge);
+    }
+    row.appendChild(
+      button('✕', 'ghost', () => {
+        moves.actions.splice(index, 1);
+        render();
+      }),
+    );
+    moveList.appendChild(row);
+  });
+  moveList.appendChild(
+    button('＋ 添加移动动作', undefined, () => {
+      moves.actions.push({ name: available[0] ?? '' });
+      markDirty();
+      render();
+    }),
+  );
+  host.appendChild(moveList);
+
+  // ---- 权重 ----
+  if (options.showWeights && options.weights) {
+    const weights = options.weights;
+    const head = el('div', 'subhead');
+    head.appendChild(el('strong', undefined, '动画链权重'));
+    head.appendChild(el('span', 'hint', 'idle + turn + move 之和，加上各分类 weight，应当等于 100'));
+    host.appendChild(head);
+    const grid = el('div', 'grid');
+    grid.appendChild(field('待机（idle）', numberInput(weights.idle, (next) => {
+      weights.idle = next;
+    }, { min: 0, max: 100 })));
+    grid.appendChild(field('转向（turn）', numberInput(weights.turn, (next) => {
+      weights.turn = next;
+    }, { min: 0, max: 100 })));
+    grid.appendChild(field('移动（move）', numberInput(weights.move, (next) => {
+      weights.move = next;
+    }, { min: 0, max: 100 })));
+    host.appendChild(grid);
   }
 
   const eventsCount = animations.events ? Object.keys(animations.events).length : 0;
-  const note = el('p', 'hint', `事件动画（animations.events）：${eventsCount} 组，原样保留（本页不编辑）。`);
-  container.appendChild(note);
+  const note = el('p', 'desc', `事件动画（events）：${eventsCount} 组，原样保留（本页不编辑）。`);
+  note.style.marginTop = '14px';
+  note.style.marginBottom = '0';
+  host.appendChild(note);
+  return host;
 }
 
-function renderWeights(container: HTMLElement, weights: AnimationWeights): void {
-  container.textContent = '';
-  container.appendChild(field('idle 权重', numberInput(weights.idle, (next) => { weights.idle = next; }, { min: 0, max: 100 })));
-  container.appendChild(field('turn 权重', numberInput(weights.turn, (next) => { weights.turn = next; }, { min: 0, max: 100 })));
-  container.appendChild(field('move 权重', numberInput(weights.move, (next) => { weights.move = next; }, { min: 0, max: 100 })));
-}
+// ============================================================================
+//  各页面
+// ============================================================================
 
-function renderCategories(container: HTMLElement, categories: CategoryConfig[], animations: AnimationsConfig): void {
-  container.textContent = '';
-  categories.forEach((category, index) => {
-    const box = el('div', 'cat');
+function renderPetPage(pet: PetEntry, index: number): HTMLElement {
+  if (!config) throw new Error('配置尚未载入');
+  // 闭包（按钮回调）里 TS 不会保留 `config` 的非空收窄（它是个可变变量），先固定成局部常量
+  const cfg = config;
+  const host = el('div', 'page-inner');
 
-    const head = el('div', 'row');
-    const idInput = textInput(category.id, (next) => { category.id = next; });
-    idInput.className = 'grow';
-    head.appendChild(idInput);
-    const weightInput = numberInput(category.weight, (next) => { category.weight = next; }, { min: 0 });
-    weightInput.className = 'num';
-    weightInput.title = '出现权重';
-    head.appendChild(weightInput);
-    const mirrorLabel = el('label', 'check');
-    mirrorLabel.appendChild(checkboxInput(category.noMirror === true, (next) => { category.noMirror = next; }));
-    mirrorLabel.appendChild(el('span', undefined, '镜像会颠倒（带文字）'));
-    head.appendChild(mirrorLabel);
-    const remove = el('button', 'icon', '✕');
-    remove.type = 'button';
-    remove.title = '删除这个分类';
-    remove.addEventListener('click', () => {
-      categories.splice(index, 1);
+  // ---- 基本信息 ----
+  const basic = card('基本信息', '尺寸是包围盒宽度（高度按 9:16 推出）；角落与边距决定启动落点，「回到初始位置」用的是同一套语义。');
+  const grid = el('div', 'grid');
+  grid.appendChild(field('显示名', textInput(pet.name, (next) => {
+    pet.name = next;
+    renderNav();
+  })));
+  grid.appendChild(field('ID', textInput(pet.id, (next) => {
+    pet.id = next;
+    renderNav();
+  }), '窗口标签用；不能含 / \\ : * ? " < > |'));
+  grid.appendChild(field('尺寸（64~2048px）', numberInput(pet.size, (next) => {
+    pet.size = next;
+  }, { min: 64, max: 2048 })));
+  grid.appendChild(field('初始角落', selectInput(pet.position.corner, CORNERS, (next) => {
+    pet.position.corner = next;
+  })));
+  grid.appendChild(field('边距 X（px）', numberInput(pet.position.marginX, (next) => {
+    pet.position.marginX = next;
+  }, { integer: true })));
+  grid.appendChild(field('边距 Y（px）', numberInput(pet.position.marginY, (next) => {
+    pet.position.marginY = next;
+  }, { integer: true })));
+  basic.appendChild(grid);
+  host.appendChild(basic);
+
+  // ---- 行为 ----
+  const custom = pet.animations != null || pet.animationWeights != null;
+  const behaviour = card('行为', '决定这只宠物"会做哪些动作"。跟随全局时，改「动画池默认值」会同时影响所有跟随的宠物。');
+  const radios = el('div', 'radio-row');
+
+  const followCard = el('label', 'radio-card');
+  followCard.dataset.active = String(!custom);
+  // 稳定 id：排障探针要能"切到单独设置再保存"（见 src-tauri/src/diagnostics.rs）
+  followCard.id = `behaviour-global-${index}`;
+  const followRadio = el('input');
+  followRadio.type = 'radio';
+  followRadio.name = `behaviour-${index}`;
+  followRadio.checked = !custom;
+  followRadio.addEventListener('change', () => {
+    pet.animations = null;
+    pet.animationWeights = null;
+    markDirty();
+    render();
+    showToast('已改为跟随全局默认');
+  });
+  followCard.appendChild(followRadio);
+  const followText = el('div');
+  followText.appendChild(el('strong', undefined, '跟随全局默认'));
+  followText.appendChild(el('span', undefined, '与其它宠物共用一套动画池'));
+  followCard.appendChild(followText);
+  radios.appendChild(followCard);
+
+  const ownCard = el('label', 'radio-card');
+  ownCard.dataset.active = String(custom);
+  ownCard.id = `behaviour-own-${index}`;
+  const ownRadio = el('input');
+  ownRadio.type = 'radio';
+  ownRadio.name = `behaviour-${index}`;
+  ownRadio.checked = custom;
+  ownRadio.addEventListener('change', () => {
+    // 从全局复制一份作为起点：直接给空池会被 Rust 侧校验拒绝（idle/clicks 不能为空）
+    pet.animations = structuredClone(cfg.animations);
+    pet.animationWeights = structuredClone(cfg.animationWeights);
+    markDirty();
+    render();
+    showToast('已复制全局默认作为起点，接着改就行');
+  });
+  ownCard.appendChild(ownRadio);
+  const ownText = el('div');
+  ownText.appendChild(el('strong', undefined, '单独设置'));
+  ownText.appendChild(el('span', undefined, '这只宠物用自己的动画池与权重'));
+  ownCard.appendChild(ownText);
+  radios.appendChild(ownCard);
+  behaviour.appendChild(radios);
+
+  if (custom) {
+    const head = el('div', 'subhead');
+    head.appendChild(el('strong', undefined, '这只宠物的动画池'));
+    head.appendChild(el('span', 'pill', '单独设置'));
+    behaviour.appendChild(head);
+    const refresh = button('从全局重新复制一份', undefined, () => {
+      pet.animations = structuredClone(cfg.animations);
+      pet.animationWeights = structuredClone(cfg.animationWeights);
       markDirty();
       render();
+      showToast('已从全局覆盖');
     });
-    head.appendChild(remove);
-    box.appendChild(head);
+    behaviour.appendChild(refresh);
+    const editor = el('div');
+    editor.style.marginTop = '10px';
+    editor.appendChild(
+      poolEditor(pet.animations as AnimationsConfig, {
+        showWeights: true,
+        weights: pet.animationWeights as AnimationWeights,
+      }),
+    );
+    behaviour.appendChild(editor);
+  }
+  host.appendChild(behaviour);
 
-    box.appendChild(listEditor(category.actions, (next) => { category.actions = next; }));
-    container.appendChild(box);
-  });
-  void animations;
-}
-
-function renderMoves(container: HTMLElement, moves: MovesConfig): void {
-  container.textContent = '';
-  const specs = moves.actions;
-  const wrap = el('div', 'list');
-  specs.forEach((spec, index) => {
-    const row = el('div', 'row');
-    const input = textInput(spec.name, (next) => { spec.name = next; }, true);
-    row.appendChild(input);
-    const hasParams = spec.params !== undefined && spec.params !== null;
-    if (hasParams) {
-      const badge = el('span', 'hint', 'params');
-      badge.title = `该动作有参数覆盖：${JSON.stringify(spec.params)}`;
-      badge.style.flex = 'none';
-      row.appendChild(badge);
-    }
-    const remove = el('button', 'icon', '✕');
-    remove.type = 'button';
-    remove.addEventListener('click', () => {
-      specs.splice(index, 1);
-      markDirty();
-      render();
-    });
-    row.appendChild(remove);
-    wrap.appendChild(row);
-  });
-  const add = el('button', undefined, '＋ 添加一个移动动作');
-  add.type = 'button';
-  add.style.alignSelf = 'flex-start';
-  add.addEventListener('click', () => {
-    specs.push({ name: available[0] ?? '' });
+  // ---- 危险区 ----
+  const danger = card('移除', '从配置里删掉这只宠物；保存后它的窗口会被关闭。');
+  const removeButton = button('删除这只宠物', 'danger', () => {
+    if (!config) return;
+    config.pets.splice(index, 1);
+    const nextIndex = Math.max(0, Math.min(index, config.pets.length - 1));
+    view = config.pets.length > 0 ? `pet:${nextIndex}` : 'animations';
     markDirty();
     render();
   });
-  wrap.appendChild(add);
+  // 稳定 id：排障探针要能"删掉第 N 只再保存"（见 src-tauri/src/diagnostics.rs）
+  removeButton.id = `btn-del-pet-${index}`;
+  danger.appendChild(removeButton);
+  host.appendChild(danger);
 
-  const defaultHint = el('p', 'hint', `移动默认参数（moves.default）：${JSON.stringify(moves.default)}（只读，改请编辑配置文件）`);
-  container.appendChild(defaultHint);
-  container.appendChild(wrap);
+  return host;
 }
 
-/** 整页重渲染（配置结构变化后调用） */
+function renderPhysicsPage(): HTMLElement {
+  if (!config) throw new Error('配置尚未载入');
+  const physics = config.physics;
+  const host = el('div', 'page-inner');
+  const node = card('拖拽与抛掷物理', '这些参数对所有宠物生效（与上游 dsh-pet 的物理参数同一套语义）。');
+  const grid = el('div', 'grid');
+  grid.appendChild(field('重力（px/s²）', numberInput(physics.gravity, (next) => {
+    physics.gravity = next;
+  }, { min: 0 })));
+  grid.appendChild(field('恢复系数（0~1）', numberInput(physics.restitution, (next) => {
+    physics.restitution = next;
+  }, { min: 0, max: 1 })));
+  grid.appendChild(field('地面摩擦（0~1）', numberInput(physics.groundFriction, (next) => {
+    physics.groundFriction = next;
+  }, { min: 0, max: 1 })));
+  grid.appendChild(field('抛掷力度（倍率）', numberInput(physics.throwPower, (next) => {
+    physics.throwPower = next;
+  }, { min: 0.01 })));
+  node.appendChild(grid);
+
+  const switches = el('div');
+  switches.style.marginTop = '14px';
+  switches.appendChild(
+    checkRow(physics.ceilingBounce, '碰到屏幕顶部会反弹', '关掉后宠物可以被甩出屏幕上缘，靠重力落回来', (next) => {
+      physics.ceilingBounce = next;
+    }),
+  );
+  switches.appendChild(
+    checkRow(physics.petCollision, '多只宠物之间会碰撞', 'M1 规划中：目前是占位开关，暂不生效', (next) => {
+      physics.petCollision = next;
+    }),
+  );
+  node.appendChild(switches);
+  host.appendChild(node);
+  return host;
+}
+
+function renderAnimationsPage(): HTMLElement {
+  if (!config) throw new Error('配置尚未载入');
+  const host = el('div', 'page-inner');
+  const followers = config.pets.filter((pet) => pet.animations == null && pet.animationWeights == null).length;
+  const node = card(
+    '全局动画池（默认值）',
+    followers === config.pets.length
+      ? '所有宠物当前都跟随这份默认值。'
+      : `有 ${config.pets.length - followers} 只宠物改成了"单独设置"，它们不受这里的改动影响。`,
+  );
+  node.appendChild(poolEditor(config.animations, { showWeights: true, weights: config.animationWeights }));
+  host.appendChild(node);
+  return host;
+}
+
+function renderSystemPage(): HTMLElement {
+  const host = el('div', 'page-inner');
+
+  const start = card('启动', '开机自启写入当前用户的启动项，不需要管理员权限；这一项**立即生效**，不经过「保存」。');
+  start.appendChild(
+    checkRow(autostart, '开机时自动启动 whale-pet', undefined, (next) => {
+      void (async () => {
+        try {
+          const now = await invoke<boolean>('set_autostart', { enabled: next });
+          autostart = now;
+          render();
+          showToast(now ? '开机自启：已启用' : '开机自启：已关闭');
+          petLog(`设置: 开机自启 → ${now ? '启用' : '关闭'}`);
+        } catch (err) {
+          render();
+          setStatus('error', `开机自启设置失败：${err instanceof Error ? err.message : String(err)}`);
+          petLogError('设置: 开机自启设置失败', err);
+        }
+      })();
+    }),
+  );
+
+  const info = card('文件与位置');
+  const rows: Array<[string, string]> = [
+    ['配置文件', configPath],
+    ['应用数据目录', appDataDir],
+    ['诊断日志', `${appDataDir}\\pet-debug.log`],
+    ['上一版备份', `${configPath}.bak`],
+  ];
+  for (const [key, value] of rows) {
+    const row = el('div', 'info-row');
+    row.appendChild(el('div', 'k', key));
+    row.appendChild(el('div', 'v', value));
+    info.appendChild(row);
+  }
+  const actions = el('div', 'row-actions');
+  actions.appendChild(
+    button('打开配置文件所在目录', undefined, () => {
+      void invoke<void>('open_config_location').catch((err: unknown) => {
+        setStatus('error', `打开失败：${err instanceof Error ? err.message : String(err)}`);
+        petLogError('设置: 打开配置文件所在目录失败', err);
+      });
+    }),
+  );
+  info.appendChild(actions);
+  host.appendChild(start);
+  host.appendChild(info);
+
+  const single = card('运行方式');
+  single.appendChild(
+    checkRow(true, '同一个应用只运行一份', '重复启动会显示已有实例而不是再开一份（单实例锁）；关掉设置窗口不会退出应用，靠托盘菜单的「退出」结束。', () => {
+      showToast('这一项是固定行为，不需要配置');
+    }),
+  );
+  host.appendChild(single);
+  return host;
+}
+
+function renderAboutPage(): HTMLElement {
+  if (!config) throw new Error('配置尚未载入');
+  const host = el('div', 'page-inner');
+  const node = card('关于', 'whale-pet desktop：把上游鲸鱼桌宠做成独立的 Windows 桌面应用（Tauri v2）。');
+  const logoRow = el('div', 'row');
+  const logo = el('div');
+  logo.style.width = '56px';
+  logo.style.height = '56px';
+  logo.style.borderRadius = '16px';
+  logo.style.background = 'linear-gradient(160deg, #ffc2db, #f8749f)';
+  logo.style.display = 'grid';
+  logo.style.placeItems = 'center';
+  logo.innerHTML = WHALE_LOGO;
+  logoRow.appendChild(logo);
+  const meta = el('div');
+  meta.style.marginLeft = '14px';
+  meta.appendChild(el('strong', undefined, 'whale-pet 0.1.0'));
+  meta.appendChild(el('div', 'inline-hint', `${config.pets.length} 只宠物 · 素材 ${available.length} 条`));
+  logoRow.appendChild(meta);
+  node.appendChild(logoRow);
+
+  const info = el('div');
+  info.style.marginTop = '14px';
+  const lines: Array<[string, string]> = [
+    ['代码许可', 'MIT（与上游一致）'],
+    ['素材许可', '允许开源使用，禁止商用（上游约定，本应用沿用）'],
+    ['文档', 'docs/ROADMAP.md · docs/VERIFICATION.md · docs/TAURI-CONFIG.md'],
+  ];
+  for (const [key, value] of lines) {
+    const row = el('div', 'info-row');
+    row.appendChild(el('div', 'k', key));
+    row.appendChild(el('div', 'v', value));
+    info.appendChild(row);
+  }
+  node.appendChild(info);
+  host.appendChild(node);
+  return host;
+}
+
+// ============================================================================
+//  导航与整页渲染
+// ============================================================================
+
+function renderNav(): void {
+  if (!config) return;
+  const nav = byId('nav');
+  nav.textContent = '';
+
+  nav.appendChild(el('div', 'nav-group', '宠物'));
+  config.pets.forEach((pet, index) => {
+    const item = el('button', 'nav-item sub');
+    item.type = 'button';
+    // 稳定的 id：排障探针要能"切到某一页"截图（见 src-tauri/src/diagnostics.rs）
+    item.id = `nav-pet-${index}`;
+    const label = el('span', 'label', pet.name.trim() || pet.id || `宠物 ${index + 1}`);
+    item.appendChild(label);
+    if (pet.animations != null || pet.animationWeights != null) {
+      const dot = el('span', 'dot');
+      dot.title = '这只宠物有自己的行为设置';
+      item.appendChild(dot);
+    }
+    item.dataset.active = String(view === `pet:${index}`);
+    item.addEventListener('click', () => {
+      view = `pet:${index}`;
+      render();
+    });
+    nav.appendChild(item);
+  });
+  const add = el('button', 'nav-item sub');
+  add.type = 'button';
+  // 稳定 id：排障探针要能"加一只宠物再保存"（见 src-tauri/src/diagnostics.rs）
+  add.id = 'btn-add-pet';
+  add.appendChild(el('span', 'label', '＋ 添加宠物'));
+  add.addEventListener('click', () => {
+    if (!config) return;
+    config.pets.push({
+      id: nextPetId(),
+      name: `宠物 ${config.pets.length + 1}`,
+      size: config.pets[0]?.size ?? 462,
+      idle: '',
+      click: '',
+      // 与上一只错开一点，否则新宠物正好压在旧宠物身上（看着像"没生效"）
+      position: { corner: 'bottom-right', marginX: 40 + config.pets.length * 24, marginY: 40 },
+      animations: null,
+      animationWeights: null,
+    });
+    view = `pet:${config.pets.length - 1}`;
+    markDirty();
+    render();
+    showToast('已添加一只宠物（记得保存）');
+  });
+  nav.appendChild(add);
+
+  nav.appendChild(el('div', 'nav-group', '通用'));
+  const commons: Array<{ id: string; label: string }> = [
+    { id: 'physics', label: '物理参数' },
+    { id: 'animations', label: '动画池默认值' },
+    { id: 'system', label: '启动与系统' },
+    { id: 'about', label: '关于' },
+  ];
+  for (const entry of commons) {
+    const item = el('button', 'nav-item');
+    item.type = 'button';
+    item.id = `nav-${entry.id}`;
+    item.appendChild(el('span', 'label', entry.label));
+    item.dataset.active = String(view === entry.id);
+    item.addEventListener('click', () => {
+      view = entry.id;
+      render();
+    });
+    nav.appendChild(item);
+  }
+}
+
+function nextPetId(): string {
+  const used = new Set((config?.pets ?? []).map((pet) => pet.id));
+  let index = (config?.pets.length ?? 0) + 1;
+  while (used.has(`pet${index}`)) index += 1;
+  return `pet${index}`;
+}
+
+/** 整页渲染（结构变化后调用） */
 function render(): void {
   if (!config) return;
-  renderAnimOptions();
-  renderPets(byId('pets'), config.pets);
-  renderPhysics(byId('physics'), config.physics);
-  renderPools(byId('pools'), config.animations);
-  renderWeights(byId('weights'), config.animationWeights);
-  renderCategories(byId('categories'), config.animations.categories, config.animations);
-  renderMoves(byId('moves'), config.animations.moves);
+  renderNav();
+
+  const body = byId('content-body');
+  const scrollTop = body.scrollTop;
+  body.textContent = '';
+
+  const crumbs = byId('crumbs');
+  crumbs.textContent = '';
+
+  let page: HTMLElement;
+  if (view.startsWith('pet:')) {
+    const index = Number(view.slice(4));
+    const pet = config.pets[index];
+    if (!pet) {
+      view = config.pets.length > 0 ? 'pet:0' : 'animations';
+      render();
+      return;
+    }
+    crumbs.appendChild(el('b', undefined, pet.name.trim() || pet.id));
+    crumbs.appendChild(el('span', undefined, `宠物 ${index + 1} / ${config.pets.length}`));
+    page = renderPetPage(pet, index);
+  } else if (view === 'physics') {
+    crumbs.appendChild(el('b', undefined, '物理参数'));
+    crumbs.appendChild(el('span', undefined, '全局'));
+    page = renderPhysicsPage();
+  } else if (view === 'animations') {
+    crumbs.appendChild(el('b', undefined, '动画池默认值'));
+    crumbs.appendChild(el('span', undefined, '全局'));
+    page = renderAnimationsPage();
+  } else if (view === 'system') {
+    crumbs.appendChild(el('b', undefined, '启动与系统'));
+    page = renderSystemPage();
+  } else {
+    crumbs.appendChild(el('b', undefined, '关于'));
+    page = renderAboutPage();
+  }
+  body.appendChild(page);
+  body.scrollTop = scrollTop;
+
+  byId('sidebar-foot').textContent = `${config.pets.length} 只宠物 · ${available.length} 条素材`;
+}
+
+/** 素材候选下拉（全局一个 datalist，所有动画名输入框共用） */
+function renderAnimOptions(): void {
+  const datalist = byId<HTMLDataListElement>('anim-options');
+  datalist.textContent = '';
+  for (const name of available) {
+    const option = el('option');
+    option.value = name;
+    datalist.appendChild(option);
+  }
 }
 
 // ============================================================================
 //  与宿主交互
 // ============================================================================
 
-/** 拉取配置并整页渲染 */
 async function load(): Promise<void> {
   try {
     const dto = await invoke<SettingsDto>('get_settings');
     config = dto.config;
     available = dto.availableAnimations;
+    autostart = dto.autostart;
+    configPath = dto.configPath;
+    appDataDir = dto.appDataDir;
     loaded = true;
-    document.body.classList.remove('dirty');
-    byId('config-path').textContent = `配置文件：${dto.configPath}`;
-    (byId('autostart') as HTMLInputElement).checked = dto.autostart;
-    byId('btn-save').toggleAttribute('disabled', false);
+    dirty = false;
+    document.body.dataset.dirty = '0';
+    byId('btn-save').removeAttribute('disabled');
+    renderAnimOptions();
+    if (view.startsWith('pet:')) {
+      const index = Number(view.slice(4));
+      if (!config.pets[index]) view = config.pets.length > 0 ? 'pet:0' : 'animations';
+    }
     render();
-    setStatus('', `已载入：${config.pets.length} 只宠物，素材 ${available.length} 条。（改动后点右下角保存）`);
+    setStatus('', `已载入：${config.pets.length} 只宠物 · 素材 ${available.length} 条`);
     petLog(`设置: 已载入配置（${config.pets.length} 只宠物，${available.length} 条素材）`);
   } catch (err) {
     loaded = false;
@@ -498,26 +920,24 @@ async function load(): Promise<void> {
   }
 }
 
-/** 保存：校验 + 落盘 + 立即生效都在宿主侧完成，这里只报结果 */
 async function save(): Promise<void> {
   if (!config || !loaded) return;
   setStatus('', '正在保存并应用…');
   try {
     const result = await invoke<SaveSettingsDto>('save_settings', { config });
-    document.body.classList.remove('dirty');
-    const lines: string[] = [
-      `已保存并立即生效：${result.petCount} 只宠物`,
-      `配置文件：${result.path}`,
-    ];
+    dirty = false;
+    document.body.dataset.dirty = '0';
+    const lines = [`已保存并立即生效：${result.petCount} 只宠物`, `配置文件：${result.path}`];
     if (result.backup) lines.push(`上一版备份：${result.backup}`);
     if (result.warnings.length > 0) {
-      lines.push(`素材警告 ${result.warnings.length} 条（这些名字在素材目录里找不到，保存本身已成功）：`);
-      for (const line of result.warnings.slice(0, 8)) lines.push(`  - ${line}`);
-      if (result.warnings.length > 8) lines.push(`  …（其余 ${result.warnings.length - 8} 条见日志）`);
+      lines.push(`素材警告 ${result.warnings.length} 条（保存本身已成功）：`);
+      for (const line of result.warnings.slice(0, 6)) lines.push(`  - ${line}`);
+      if (result.warnings.length > 6) lines.push(`  …（其余 ${result.warnings.length - 6} 条见日志）`);
     }
     setStatus(result.warnings.length > 0 ? 'warn' : 'ok', lines.join('\n'));
     petLog(`设置: 保存成功（${result.petCount} 只宠物，${result.warnings.length} 条素材警告）`);
-    // 保存后宠物窗是全新的：素材清单没变，但为了让 UI 与宿主完全对齐，重新拉一次
+    showToast('已保存并立即生效');
+    // 保存后宠物窗是全新的：重新拉一次让界面与宿主完全对齐
     await load();
     setStatus(result.warnings.length > 0 ? 'warn' : 'ok', lines.join('\n'));
   } catch (err) {
@@ -526,25 +946,16 @@ async function save(): Promise<void> {
   }
 }
 
-/** 生成一个未被占用的宠物 id */
-function nextPetId(): string {
-  const used = new Set((config?.pets ?? []).map((pet) => pet.id));
-  let index = (config?.pets.length ?? 0) + 1;
-  while (used.has(`pet${index}`)) index += 1;
-  return `pet${index}`;
-}
-
 // ============================================================================
 //  启动
 // ============================================================================
 
 function bind(): void {
   setLogLabel('settings');
-
+  byId('brand-logo').innerHTML = WHALE_LOGO;
   byId('btn-save').addEventListener('click', () => void save());
-  byId('btn-reload').addEventListener('click', () => void load());
-  byId('btn-close').addEventListener('click', () => {
-    void invoke<void>('close_settings').catch((err: unknown) => petLogError('设置: 关闭窗口失败', err));
+  byId('btn-reload').addEventListener('click', () => {
+    void load().then(() => showToast('已放弃未保存的改动'));
   });
   byId('btn-open-file').addEventListener('click', () => {
     void invoke<void>('open_config_location').catch((err: unknown) => {
@@ -552,50 +963,10 @@ function bind(): void {
       petLogError('设置: 打开配置文件所在目录失败', err);
     });
   });
-
-  byId('btn-add-pet').addEventListener('click', () => {
-    if (!config) return;
-    config.pets.push({
-      id: nextPetId(),
-      name: `宠物 ${config.pets.length + 1}`,
-      size: config.pets[0]?.size ?? 462,
-      idle: '',
-      click: '',
-      // 与上一只错开一点，否则新宠物会正好压在旧宠物身上（看着像"没生效"）
-      position: { corner: 'bottom-right', marginX: 40 + config.pets.length * 24, marginY: 40 },
-    });
-    markDirty();
-    render();
-  });
-
-  byId('btn-add-category').addEventListener('click', () => {
-    if (!config) return;
-    // actions 不能为空（Rust 侧校验会拒绝）：给一个真实存在的动画作为起点
-    config.animations.categories.push({
-      id: `新分类 ${config.animations.categories.length + 1}`,
-      weight: 10,
-      actions: [available[0] ?? config.animations.idle[0] ?? ''],
-      noMirror: false,
-    });
-    markDirty();
-    render();
-  });
-
-  byId('autostart').addEventListener('change', (event) => {
-    const target = event.target as HTMLInputElement;
-    const wanted = target.checked;
-    void (async () => {
-      try {
-        const now = await invoke<boolean>('set_autostart', { enabled: wanted });
-        target.checked = now;
-        setStatus('ok', now ? '开机自启：已启用（写入当前用户启动项）' : '开机自启：已关闭');
-        petLog(`设置: 开机自启 → ${now ? '启用' : '关闭'}`);
-      } catch (err) {
-        target.checked = !wanted;
-        setStatus('error', `开机自启设置失败：${err instanceof Error ? err.message : String(err)}`);
-        petLogError('设置: 开机自启设置失败', err);
-      }
-    })();
+  window.addEventListener('beforeunload', (event) => {
+    if (!dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
 }
 

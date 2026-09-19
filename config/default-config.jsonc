@@ -58,6 +58,14 @@
         "marginX": 24,
         "marginY": 100
       }
+
+      // 可选：这只宠物**单独**的动画池与权重（不写 = 跟随下面的全局 animations / animationWeights）。
+      // 结构与全局那两段完全一致，整体覆盖（不是逐字段合并）——这样"删掉的动作为什么还在播"
+      // 这类问题不会发生。设置窗口里对应「行为 → 单独设置」。
+      //
+      //   "animations": { "idle": ["待机呼吸休闲"], "clicks": ["点击回应-开心跃动"],
+      //                   "moves": { "default": { ... }, "actions": [] }, "categories": [] },
+      //   "animationWeights": { "idle": 10, "turn": 5, "move": 5 }
     }
   ],
 

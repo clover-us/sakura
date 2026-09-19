@@ -532,3 +532,97 @@ pub fn open_config_location(state: State<'_, AppState>) -> Result<(), String> {
 pub fn close_settings(app: AppHandle) -> Result<(), String> {
     crate::settings_window::close(&app)
 }
+
+// ============================================================================
+//  自绘托盘菜单（外观升级）
+//
+//  这一组命令只服务 `tray-menu.html`：它取代了系统原生托盘菜单，
+//  因此需要"当前状态"（宠物列表 / 显隐 / 每只宠物的动画池）与"执行动作"两个入口。
+// ============================================================================
+
+/// 托盘菜单里的一只宠物
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPetDto {
+    /// 窗口标签（动作下发要按它定位）
+    pub label: String,
+    /// 显示名
+    pub name: String,
+    /// 当前是否可见
+    pub visible: bool,
+    /// **这只宠物实际生效**的动画池（覆盖了就是它自己的）
+    pub animations: crate::config::AnimationsConfig,
+    /// 这只宠物实际生效的动画链权重
+    pub animation_weights: crate::config::AnimationWeights,
+    /// 是否自定义了行为（菜单里给个角标，用户一眼看出"这只不一样"）
+    pub custom_behaviour: bool,
+}
+
+/// 托盘菜单首屏所需的全部状态
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayMenuStateDto {
+    pub pets: Vec<TrayPetDto>,
+    /// 是否有任意一只可见（"显示/隐藏"切换项的文案与动作都看它）
+    pub any_visible: bool,
+    /// 素材目录里可用的动画名（不含扩展名；菜单里可用来判断"配置引用了但没素材"）
+    pub available_animations: Vec<String>,
+}
+
+/// 取托盘菜单状态
+#[tauri::command]
+pub fn get_tray_menu_state(state: State<'_, AppState>) -> Result<TrayMenuStateDto, String> {
+    let config = state.config_snapshot();
+    // 锁内只取标签与可见性，出锁后再组装（与"持锁期不做窗口操作"同一纪律）
+    let rows: Vec<(String, String, bool)> = {
+        let pets = watchdog::timed_lock(&state.pets, "pets（托盘菜单状态）");
+        pets.values()
+            .map(|runtime| {
+                let visible = runtime.window.is_visible().unwrap_or(false);
+                (runtime.label().to_string(), runtime.config.name.clone(), visible)
+            })
+            .collect()
+    };
+
+    let mut pets = Vec::with_capacity(rows.len());
+    for (index, (label, name, visible)) in rows.into_iter().enumerate() {
+        // 按"窗口标签顺序"取配置里的宠物：create_one 用的标签是 `pet-<id>-<index>`，
+        // 所以这里用下标对齐（配置里的顺序 = 建窗顺序）
+        let pet = config.pets.get(index);
+        let (animations, weights, custom) = match pet {
+            Some(pet) => (
+                config.effective_animations(pet),
+                config.effective_weights(pet),
+                crate::config::AppConfig::pet_has_custom_behaviour(pet),
+            ),
+            None => (config.animations.clone(), config.animation_weights, false),
+        };
+        pets.push(TrayPetDto { label, name, visible, animations, animation_weights: weights, custom_behaviour: custom });
+    }
+
+    Ok(TrayMenuStateDto {
+        any_visible: pets.iter().any(|pet| pet.visible),
+        pets,
+        available_animations: available_animations(&state.app_data_dir),
+    })
+}
+
+/// 执行一条托盘菜单动作（自绘菜单页调用）
+#[tauri::command]
+pub fn tray_menu_action(
+    app: AppHandle,
+    action: String,
+    label: Option<String>,
+    anim: Option<String>,
+) -> Result<(), String> {
+    // 动作执行入口只有 `tray::run_menu_action` 一处：命令与排障探针共用，
+    // 于是"探针验过"就等于"菜单验过"
+    crate::tray::run_menu_action(&app, &action, label.as_deref(), anim.as_deref())?;
+    Ok(())
+}
+
+/// 托盘菜单换尺寸（主菜单 ↔ 动作点播展开）：页面按内容算好高度报上来
+#[tauri::command]
+pub fn resize_tray_menu(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    crate::tray_menu::resize(&app, width, height)
+}

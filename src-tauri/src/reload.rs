@@ -299,8 +299,6 @@ pub fn set_autostart(app: &AppHandle, enabled: bool) -> Result<bool, String> {
         format!("{}开机自启失败：{e}", if enabled { "启用" } else { "关闭" })
     })?;
     let now = autostart_enabled(app);
-    // 托盘那一份勾选也要跟上（重建托盘：它按系统真实状态现建）
-    crate::tray::refresh_after_autostart_change(app);
     eprintln!("[whale-pet] 开机自启：{}", if now { "已启用" } else { "已关闭" });
     Ok(now)
 }

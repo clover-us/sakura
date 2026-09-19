@@ -27,6 +27,13 @@ crate-type = ["rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# 开发期工具（`cargo run --example make-icon`）专用：png 编码与 ico 打包只用于生成图标文件，
+# 放 dev-dependencies 可以保证**应用二进制不会多出这两个依赖**（小程序，但没必要背）。
+[dev-dependencies]
+png = "0.17"
+# 注意：ico 0.5 把 png 作为**必需依赖**（不是可选 feature），所以不能写 features = ["png"]
+ico = "0.5"
+
 [dependencies]
 # ---------------------------------------------------------------------------
 # 依赖刻意保持最小：基础 Tauri 只带 core（窗口 / 事件 / IPC），不启用任何插件。

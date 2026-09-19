@@ -178,9 +178,12 @@ pub fn spawn_synthetic_press_probe(app: tauri::AppHandle, label: String) {
 ///   - `=autostart` 再点一次页面上的「开机自启」勾选框
 ///   - `=addpet`    先点「＋ 添加一只宠物」再点「保存并立即生效」（验证多开）
 ///   - `=delpet`    点第二只宠物的「删除这只」再保存（验证多开减员）
+///   - `=ownbehaviour` 把第一只宠物切成「单独设置」再保存（验证每宠独立行为）
+///   - `=nav:<页>`  切到某一页（`nav:physics` / `nav:animations` / `nav:system` / `nav:about`），
+///                  配合 `scripts/capture-window.ps1` 用来逐页检查排版
 ///
 /// 只在显式设置环境变量时执行，不参与正常运行路径。
-pub fn spawn_settings_probe(app: tauri::AppHandle, action: &'static str) {
+pub fn spawn_settings_probe(app: tauri::AppHandle, action: String) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(1500));
         eprintln!("[whale-pet][设置探针] 打开设置窗口（动作={action}）");
@@ -188,12 +191,38 @@ pub fn spawn_settings_probe(app: tauri::AppHandle, action: &'static str) {
             eprintln!("[whale-pet][设置探针] 打开设置窗口失败：{err}");
             return;
         }
-        let sequence: &[&str] = match action {
-            "save" => &["btn-save"],
-            "autostart" => &["autostart"],
-            "addpet" => &["btn-add-pet", "btn-save"],
-            "delpet" => &["btn-del-pet-1", "btn-save"],
-            _ => &[],
+        // 切页动作单独走一条脚本（点的是导航项，不是按钮）
+        if let Some(nav) = action.strip_prefix("nav:") {            std::thread::sleep(std::time::Duration::from_millis(6000));
+            let Some(window) = app.get_webview_window(crate::settings_window::LABEL) else {
+                eprintln!("[whale-pet][设置探针] 找不到设置窗口");
+                return;
+            };
+            let script = format!(
+                r#"(function () {{
+  var tries = 0;
+  function attempt() {{
+    var node = document.getElementById('nav-{nav}');
+    if (node) {{ node.click(); return; }}
+    if (++tries < 40) setTimeout(attempt, 250);
+  }}
+  attempt();
+  return 'scheduled';
+}})()"#
+            );
+            match window.eval(&script) {
+                Ok(()) => eprintln!("[whale-pet][设置探针] 已注入切页脚本：nav-{nav}"),
+                Err(err) => eprintln!("[whale-pet][设置探针] 注入切页脚本失败：{err}"),
+            }
+            return;
+        }
+        let sequence: Vec<&str> = match action.as_str() {
+            "save" => vec!["btn-save"],
+            "autostart" => vec!["autostart"],
+            "addpet" => vec!["btn-add-pet", "btn-save"],
+            "delpet" => vec!["btn-del-pet-1", "btn-save"],
+            // 每宠独立行为：切成"单独设置"（会自动从全局复制一份）再保存
+            "ownbehaviour" => vec!["behaviour-own-0", "btn-save"],
+            _ => Vec::new(),
         };
         if sequence.is_empty() {
             return;
@@ -204,7 +233,7 @@ pub fn spawn_settings_probe(app: tauri::AppHandle, action: &'static str) {
             eprintln!("[whale-pet][设置探针] 找不到设置窗口，注入取消");
             return;
         };
-        match window.eval(&retry_click_sequence(sequence)) {
+        match window.eval(&retry_click_sequence(&sequence)) {
             Ok(()) => eprintln!("[whale-pet][设置探针] 已注入点击脚本：{sequence:?}"),
             Err(err) => eprintln!("[whale-pet][设置探针] 注入点击脚本失败：{err}"),
         }
@@ -239,28 +268,73 @@ fn retry_click_sequence(element_ids: &[&str]) -> String {
     )
 }
 
-/// 排障：`WHALE_PET_DIAG_TRAY=<菜单项 id>[,<id>…]` —— 按 id 依次走一遍托盘菜单分支。
+/// 排障：`WHALE_PET_DIAG_TRAY=<动作>[,<动作>…]` —— 按顺序走一遍托盘菜单的动作层。
 ///
 /// 为什么需要它：托盘的**真实点击注入不了**（本机桌面环境会持续把光标挪走，
-/// M1 的合成输入自测也踩过这一点）。而"点哪个菜单项"最终都落到
-/// [`crate::tray::handle_menu_event`] 这一个函数的 match 分支上——探针直接按 id 调它，
-/// 于是"菜单项 → 动作"这一层被真实执行到，没被覆盖的只剩"muda 把系统点击派发进来"。
+/// M1 的合成输入自测也踩过这一点）。而菜单项被点击后最终都落到
+/// [`crate::tray::run_menu_action`] 这一个函数上——探针直接调它，
+/// 于是"菜单项 → 动作"这一层被真实执行到；自绘菜单页调的是同一个函数
+/// （`tray_menu_action` 命令内部就是它），所以探针验过 ≈ 菜单验过。
 ///
-/// 用法示例（把显隐、回位、动作点播、设置、自启各走一遍，最后再切回自启关闭）：
+/// 动作写法（`anim` 用 `动作名` 前缀分隔）：
 ///
 /// ```text
-/// WHALE_PET_DIAG_TRAY=pet-hide-all,pet-show-all,pet-home,pet-anim:待机:待机呼吸休闲,pet-settings
+/// WHALE_PET_DIAG_TRAY=toggle,home,anim:待机呼吸休闲,settings
 /// ```
 pub fn spawn_tray_probe(app: tauri::AppHandle, items: Vec<String>) {
     std::thread::spawn(move || {
         // 等窗口/页面就绪，否则"动作点播"发出去时页面还没挂上事件监听
         std::thread::sleep(std::time::Duration::from_millis(4000));
         for item in items {
-            eprintln!("[whale-pet][托盘探针] 触发菜单项：{item}");
-            crate::tray::handle_menu_event(&app, &item);
+            eprintln!("[whale-pet][托盘探针] 触发菜单动作：{item}");
+            let (action, anim) = match item.split_once(':') {
+                Some((action, anim)) => (action.to_string(), Some(anim.to_string())),
+                None => (item.clone(), None),
+            };
+            if let Err(err) = crate::tray::run_menu_action(&app, &action, None, anim.as_deref()) {
+                eprintln!("[whale-pet][托盘探针] 动作失败：{err}");
+            }
             std::thread::sleep(std::time::Duration::from_millis(900));
         }
-        eprintln!("[whale-pet][托盘探针] 全部菜单项已走完");
+        eprintln!("[whale-pet][托盘探针] 全部动作已走完");
+    });
+}
+
+/// 排障：`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker]` —— 启动后按固定延时**弹出托盘菜单**。
+///
+/// 用途：托盘菜单的样式只能看（`scripts/capture-window.ps1` 会按标题截图），
+/// 而"点托盘图标"在自动化环境里注不进去（见 `spawn_tray_probe` 的说明）。
+/// 本探针走的是**与托盘点击完全相同的 `tray_menu::show()`**，
+/// 因此截到的就是真实弹出效果（只是锚点取的是当时的鼠标位置）。
+///
+/// 带 `:picker` 时再点一下页面里的「动作点播」，把展开态也截下来
+/// （展开会让窗口变高，这条路径单独验一次）。
+pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, open_picker: bool) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        eprintln!("[whale-pet][托盘菜单探针] 弹出托盘菜单（展开动作点播={open_picker}）");
+        if let Err(err) = crate::tray_menu::show(&app) {
+            eprintln!("[whale-pet][托盘菜单探针] 弹出失败：{err}");
+            return;
+        }
+        if !open_picker {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let Some(window) = app.get_webview_window(crate::tray_menu::LABEL) else {
+            eprintln!("[whale-pet][托盘菜单探针] 找不到托盘菜单窗");
+            return;
+        };
+        let script = r#"(function () {
+  var node = document.querySelector('[data-act="picker"]');
+  if (!node) return 'no-item';
+  node.click();
+  return 'clicked';
+})()"#;
+        match window.eval(script) {
+            Ok(()) => eprintln!("[whale-pet][托盘菜单探针] 已点击「动作点播」"),
+            Err(err) => eprintln!("[whale-pet][托盘菜单探针] 注入点击失败：{err}"),
+        }
     });
 }
 

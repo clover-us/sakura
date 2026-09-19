@@ -23,6 +23,7 @@ pub mod bubble;
 pub mod commands;
 pub mod config;
 pub mod display;
+pub mod icon_art;
 pub mod menu_window;
 pub mod model;
 pub mod pet_protocol;
@@ -30,6 +31,7 @@ pub mod reload;
 pub mod settings_window;
 pub mod state;
 pub mod tray;
+pub mod tray_menu;
 pub mod watchdog;
 
 mod diagnostics;
@@ -130,6 +132,10 @@ pub fn run() {
             commands::set_autostart,
             commands::open_config_location,
             commands::close_settings,
+            // 外观升级：自绘托盘菜单
+            commands::get_tray_menu_state,
+            commands::tray_menu_action,
+            commands::resize_tray_menu,
         ])
         .build(tauri::generate_context!())
         .expect("初始化 Tauri 应用失败")
@@ -246,6 +252,12 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // ---- 5. 托盘 ----
     build_tray(app)?;
 
+    // ---- 5.2 托盘菜单窗：预建并隐藏（"点了就出现"，与右键菜单同一考虑）----
+    if let Err(err) = tray_menu::prepare(app) {
+        // 预备失败不该拦住启动：`tray_menu::show` 里还有一条"按需创建"的后路
+        eprintln!("[whale-pet] 预备托盘菜单窗失败：{err}");
+    }
+
     // ---- 5.5 配置热重载的指纹基线 ----
     // 必须在启动时对齐一次：否则第一次轮询会拿 `None` 与当前文件比，判成"被修改"
     // （实测后果：启动 ~1 秒后白重建一次宠物窗，并顺带触发一次误退出）。
@@ -274,18 +286,12 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     }
 
-    // ---- 7b. 设置窗口探针（`WHALE_PET_DIAG_SETTINGS=1|save|autostart|addpet|delpet`，见 diagnostics）----
-    let settings_probe = match std::env::var("WHALE_PET_DIAG_SETTINGS").as_deref() {
-        Ok("save") => Some("save"),
-        Ok("autostart") => Some("autostart"),
-        Ok("addpet") => Some("addpet"),
-        Ok("delpet") => Some("delpet"),
-        Ok("1") => Some("1"),
-        _ => None,
-    };
-    if let Some(action) = settings_probe {
-        eprintln!("[whale-pet] 启用设置窗口探针（动作={action}）");
-        diagnostics::spawn_settings_probe(app.clone(), action);
+    // ---- 7b. 设置窗口探针（`WHALE_PET_DIAG_SETTINGS=1|save|autostart|addpet|delpet|nav:<页>`）----
+    if let Ok(value) = std::env::var("WHALE_PET_DIAG_SETTINGS") {
+        if !value.trim().is_empty() {
+            eprintln!("[whale-pet] 启用设置窗口探针（动作={value}）");
+            diagnostics::spawn_settings_probe(app.clone(), value);
+        }
     }
 
     // ---- 7c. 托盘探针（`WHALE_PET_DIAG_TRAY=pet-hide-all,pet-home,…`，见 diagnostics）----
@@ -296,6 +302,18 @@ fn setup_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("[whale-pet] 启用托盘探针：{} 个菜单项", items.len());
             diagnostics::spawn_tray_probe(app.clone(), items);
         }
+    }
+
+    // ---- 7d. 托盘菜单样式探针（`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker]`：延时后弹出，供截图）----
+    if let Ok(value) = std::env::var("WHALE_PET_DIAG_TRAY_MENU") {
+        let (delay_text, mode) = match value.split_once(':') {
+            Some((delay, mode)) => (delay, Some(mode)),
+            None => (value.as_str(), None),
+        };
+        let delay: u64 = delay_text.parse().unwrap_or(4000);
+        let open_picker = mode == Some("picker");
+        eprintln!("[whale-pet] 启用托盘菜单探针（{delay}ms 后弹出，展开点播={open_picker}）");
+        diagnostics::spawn_tray_menu_probe(app.clone(), delay, open_picker);
     }
 
     Ok(())
@@ -357,6 +375,11 @@ fn spawn_poll_loop(app: AppHandle) {
                 // 菜单开着时"在菜单外按下鼠标"就关掉它（菜单窗不可聚焦，拿不到失焦事件）
                 if primary_down && !prev_primary_down {
                     menu_window::close_on_outside_press(
+                        &app,
+                        crate::model::Vec2 { x: position.x, y: position.y },
+                    );
+                    // 托盘菜单同理（两者互斥显示，但关闭判定各管各的）
+                    tray_menu::close_on_outside_press(
                         &app,
                         crate::model::Vec2 { x: position.x, y: position.y },
                     );

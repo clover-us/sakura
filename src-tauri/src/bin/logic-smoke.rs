@@ -321,6 +321,92 @@ fn main() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ---- 11. 每只宠物独立的动画池（M2 外观升级） ----
+    //
+    // 语义很关键：**整体覆盖**，不是逐字段合并。这里把三条边界钉死：
+    //  ① 没写覆盖 → 用的是全局那份（指针级别的"同一份"不值得断言，比内容即可）；
+    //  ② 写了覆盖 → 用的是自己的，且**全局怎么改都不影响它**；
+    //  ③ 覆盖写坏了（idle 空）→ 校验要报错，并且错误信息里带宠物标识。
+    println!("\n[11] 每宠独立动画池");
+    {
+        use whale_pet_desktop_lib::config::{migrate_config as migrate, validate_animation_assets};
+
+        // 用一个最小配置做夹具：全局 idle=["全局待机"]，宠物 A 跟随、宠物 B 覆盖
+        let minimal = |pet_extra: &str| {
+            format!(
+                r#"{{"schemaVersion":1,"physics":{{"gravity":1400,"restitution":0.78,"groundFriction":2.5,"ceilingBounce":true,"throwPower":1.0,"petCollision":false}},
+                   "pets":[{{"id":"a","name":"跟随的","size":420,"idle":"","click":"","position":{{"corner":"top-right","marginX":24,"marginY":24}}}},
+                           {{"id":"b","name":"自定义的","size":420,"idle":"","click":"","position":{{"corner":"top-right","marginX":24,"marginY":24}}{pet_extra}}}],
+                   "animations":{{"idle":["全局待机"],"turn":[],"drag":[],"clicks":["全局点击"],
+                     "moves":{{"default":{{}},"actions":[]}},"categories":[],"events":{{}}}},
+                   "animationWeights":{{"idle":10,"turn":5,"move":5}}}}"#
+            )
+        };
+        let own_ok = r#","animations":{"idle":["自己的待机"],"turn":[],"drag":[],"clicks":["自己的点击"],
+                        "moves":{"default":{},"actions":[]},"categories":[],"events":{}},
+                        "animationWeights":{"idle":1,"turn":1,"move":1}"#;
+        let own_broken = r#","animations":{"idle":[],"turn":[],"drag":[],"clicks":["x"],
+                        "moves":{"default":{},"actions":[]},"categories":[],"events":{}}"#;
+
+        match serde_json::from_str::<AppConfig>(&minimal(own_ok)) {
+            Ok(mut config) => {
+                migrate(&mut config);
+                let follows = &config.pets[0];
+                let custom = &config.pets[1];
+                check(
+                    "没写覆盖的宠物用全局池",
+                    config.effective_animations(follows).idle == vec!["全局待机".to_string()],
+                    "跟随全局的宠物拿到了别的池",
+                );
+                check(
+                    "写了覆盖的宠物用自己的池",
+                    config.effective_animations(custom).idle == vec!["自己的待机".to_string()],
+                    "覆盖没生效",
+                );
+                check(
+                    "覆盖是整体替换：全局权重不参与",
+                    config.effective_weights(custom).idle == 1.0,
+                    "权重没有被覆盖",
+                );
+                check(
+                    "自定义行为可被识别（UI/托盘用它打角标）",
+                    !AppConfig::pet_has_custom_behaviour(follows) && AppConfig::pet_has_custom_behaviour(custom),
+                    "识别函数结果不对",
+                );
+                // 全局改掉之后，覆盖的那只不受影响
+                config.animations.idle = vec!["全局换掉了".to_string()];
+                check(
+                    "全局改动不影响已覆盖的宠物",
+                    config.effective_animations(custom).idle == vec!["自己的待机".to_string()],
+                    "覆盖被全局带着变了",
+                );
+                check("带覆盖的配置整体校验通过", config.validate().is_ok(), &format!("{:?}", config.validate().err()));
+                // 素材警告要能指出是哪只宠物
+                let warnings = validate_animation_assets(&config, &["不存在的素材.webm".to_string()]);
+                check(
+                    "素材警告带宠物作用域",
+                    warnings.iter().any(|line| line.contains("宠物 自定义的")),
+                    &format!("警告里没有宠物标识：{warnings:?}"),
+                );
+            }
+            Err(err) => check("带覆盖的配置可解析", false, &err.to_string()),
+        }
+
+        match serde_json::from_str::<AppConfig>(&minimal(own_broken)) {
+            Ok(mut config) => {
+                migrate(&mut config);
+                let err = config.validate().err().unwrap_or_default();
+                check("覆盖写坏了会被校验拒绝", !err.is_empty(), "空 idle 的覆盖竟然通过");
+                check(
+                    "拒绝信息里指出是哪只宠物",
+                    err.contains("自定义的"),
+                    &format!("错误信息没有宠物标识：{err}"),
+                );
+            }
+            Err(err) => check("覆盖写坏的配置仍可解析（结构本身合法）", false, &err.to_string()),
+        }
+    }
+
     // ---- 汇总 ----
     // SAFETY: 单线程
     let (passed, failed) = unsafe { (PASSED, FAILED) };

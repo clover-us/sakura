@@ -5,25 +5,54 @@
     <title>whale-pet 设置</title>
     <style>
       /*
-       * 设置窗口的样式（与桌宠那三个窗口完全无关：这是个普通界面）。
+       * 设置窗口的样式（M2 外观升级：左侧导航 + 跟随系统深浅色）。
        *
-       * 约定：
-       *   - 不透明深色底：设置窗是"正经窗口"，走系统边框与任务栏，不需要透明；
-       *   - 不做圆角/自绘标题栏：系统的最大化/最小化/关闭按钮必须原样可用；
-       *   - 尺寸自适应：窗口可缩放，内容区滚动（min-width 720 由宿主设了 min_inner_size）。
+       * 设计约束（来自参考图）：
+       *   - 左侧一条**竖向导航**，右侧是内容区，底部一条状态栏；
+       *   - 全界面只有**一个**彩色（粉玫瑰 #ec6f9b）：选中项、焦点环、主按钮都用它；
+       *   - 卡片用 1px 细边框而不是重投影，间距宽松，避免"一堆控件糊在一起"；
+       *   - `prefers-color-scheme` 同时给浅色与深色两套变量（同一份结构，不改布局）。
        */
       :root {
-        --bg: #1b1d22;
-        --panel: #24262c;
-        --panel-2: #2b2e35;
-        --line: #383b44;
-        --text: #e7e9ee;
-        --muted: #9aa1ad;
-        --accent: #58a6ff;
-        --accent-weak: #2b4a6f;
-        --danger: #ff7b72;
-        --warn: #f0c674;
-        --ok: #7ee787;
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --side: #f8f8fa;
+        --card: #ffffff;
+        --text: #23262d;
+        --muted: #8b909a;
+        --line: #ececf0;
+        --line-strong: #dcdce2;
+        --input: #ffffff;
+        --hover: #f5f4f6;
+        --accent: #ec6f9b;
+        --accent-soft: #fdeef4;
+        --accent-text: #c94d7c;
+        --danger: #e5534b;
+        --danger-soft: #fdeceb;
+        --ok: #2f9e6e;
+        --warn: #b7791f;
+        --shadow: 0 10px 28px rgba(28, 20, 30, 0.1);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1e23;
+          --side: #191b20;
+          --card: #22242a;
+          --text: #e8e9ee;
+          --muted: #9096a1;
+          --line: #2f323a;
+          --line-strong: #3b3f49;
+          --input: #1b1d22;
+          --hover: #262931;
+          --accent: #ff86ae;
+          --accent-soft: #38262e;
+          --accent-text: #ff9dc0;
+          --danger: #ff7b72;
+          --danger-soft: #3a2523;
+          --ok: #7ee787;
+          --warn: #f0c674;
+          --shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+        }
       }
       * {
         box-sizing: border-box;
@@ -36,291 +65,491 @@
         background: var(--bg);
         color: var(--text);
         font: 13px/1.6 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+        overflow: hidden;
       }
-      body {
+
+      .app {
+        display: grid;
+        grid-template-columns: 218px 1fr;
+        height: 100%;
+      }
+
+      /* ---- 左侧导航 ---- */
+      .sidebar {
+        background: var(--side);
+        border-right: 1px solid var(--line);
         display: flex;
         flex-direction: column;
+        min-height: 0;
       }
-
-      /* ---- 顶部条 ---- */
-      header {
-        flex: none;
-        padding: 14px 18px 12px;
-        border-bottom: 1px solid var(--line);
-        background: var(--panel);
-      }
-      .title-row {
+      .brand {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 10px;
+        padding: 16px 16px 12px;
       }
-      h1 {
-        margin: 0;
-        font-size: 16px;
-        font-weight: 600;
+      .brand .logo {
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border-radius: 9px;
+        background: linear-gradient(160deg, #ffc2db, #f8749f);
+        display: grid;
+        place-items: center;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
       }
-      .path {
+      .brand strong {
+        display: block;
+        font-size: 13.5px;
+        letter-spacing: 0.2px;
+      }
+      .brand span {
+        display: block;
+        font-size: 11.5px;
         color: var(--muted);
-        font-size: 12px;
-        word-break: break-all;
       }
-      .toolbar {
-        margin-top: 10px;
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      /* ---- 主体 ---- */
-      main {
+      .nav {
         flex: 1;
-        overflow: auto;
-        padding: 16px 18px 24px;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 4px 8px 12px;
       }
-      section {
-        margin-bottom: 18px;
-        background: var(--panel);
-        border: 1px solid var(--line);
+      .nav::-webkit-scrollbar,
+      .content-body::-webkit-scrollbar {
+        width: 8px;
+      }
+      .nav::-webkit-scrollbar-thumb,
+      .content-body::-webkit-scrollbar-thumb {
+        background: var(--line-strong);
         border-radius: 8px;
-        padding: 14px 16px 16px;
       }
-      section > h2 {
-        margin: 0 0 4px;
-        font-size: 14px;
-        font-weight: 600;
-      }
-      .hint {
+      .nav-group {
+        padding: 12px 8px 4px;
+        font-size: 11px;
+        letter-spacing: 0.6px;
         color: var(--muted);
-        font-size: 12px;
-        margin: 0 0 12px;
       }
-
-      /* ---- 表单元件 ---- */
-      button {
+      .nav-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 10px;
+        margin: 1px 0;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: inherit;
         font: inherit;
-        color: var(--text);
-        background: var(--panel-2);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 5px 12px;
+        text-align: left;
         cursor: pointer;
       }
-      button:hover {
-        border-color: var(--accent);
+      .nav-item:hover {
+        background: var(--hover);
       }
-      button.primary {
-        background: var(--accent-weak);
-        border-color: var(--accent);
+      .nav-item[data-active='true'] {
+        background: var(--accent-soft);
+        color: var(--accent-text);
         font-weight: 600;
       }
-      button.icon {
-        padding: 3px 8px;
+      .nav-item[data-active='true']::before {
+        content: '';
+        position: absolute;
+        left: -8px;
+        top: 6px;
+        bottom: 6px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: var(--accent);
+      }
+      .nav-item .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .nav-item .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        flex: none;
+      }
+      .nav-item.sub {
+        padding-left: 22px;
+      }
+      .sidebar-foot {
+        padding: 10px 14px;
+        border-top: 1px solid var(--line);
+        font-size: 11.5px;
         color: var(--muted);
       }
-      button.icon:hover {
+
+      /* ---- 右侧内容 ---- */
+      .content {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 24px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .crumbs {
+        flex: 1;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .crumbs b {
+        color: var(--text);
+        font-size: 15px;
+        font-weight: 600;
+        margin-right: 6px;
+      }
+      .content-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 18px 24px 28px;
+      }
+      .page-inner {
+        max-width: 820px;
+      }
+      .statusbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 24px;
+        border-top: 1px solid var(--line);
+        background: var(--bg);
+      }
+      #status-text {
+        flex: 1;
+        font-size: 12px;
+        color: var(--muted);
+        white-space: pre-wrap;
+        max-height: 72px;
+        overflow-y: auto;
+      }
+      #status-text.ok {
+        color: var(--ok);
+      }
+      #status-text.warn {
+        color: var(--warn);
+      }
+      #status-text.error {
         color: var(--danger);
-        border-color: var(--danger);
+      }
+
+      /* ---- 卡片与表单 ---- */
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px 18px;
+        margin-bottom: 16px;
+      }
+      .card > h3 {
+        margin: 0 0 4px;
+        font-size: 13.5px;
+        font-weight: 600;
+      }
+      .card > p.desc {
+        margin: 0 0 14px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+        gap: 12px 14px;
+        /* 关键：**不要拉伸**。否则带说明文字的字段会把整行撑高，
+           同一行里其它字段的输入框就被推得高低不齐（第一版实测的观感问题） */
+        align-items: start;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+      }
+      .field > span {
+        font-size: 12px;
+        color: var(--muted);
       }
       input[type='text'],
       input[type='number'],
       select {
         font: inherit;
         color: var(--text);
-        background: #1d1f24;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 4px 8px;
+        background: var(--input);
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        padding: 6px 9px;
         width: 100%;
+        min-width: 0;
       }
       input:focus,
       select:focus {
         outline: none;
         border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
       }
-      input[type='checkbox'] {
-        width: auto;
+      input[type='checkbox'],
+      input[type='radio'] {
         accent-color: var(--accent);
+        width: 15px;
+        height: 15px;
+        margin: 0;
       }
-      label.field {
+      /* 勾选行：**必须是横向 flex 且整行可用**——早先把它塞进窄网格单元里，
+         文案被挤成了一列一个字（用户看到的"杂乱"主要就是它） */
+      .check-row {
         display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      label.field > span {
-        color: var(--muted);
-        font-size: 12px;
-      }
-      label.check {
-        display: inline-flex;
         align-items: center;
-        gap: 6px;
-        margin-right: 16px;
-      }
-
-      /* ---- 宠物卡片 ---- */
-      .pet-card {
-        background: var(--panel-2);
+        gap: 9px;
+        padding: 8px 10px;
         border: 1px solid var(--line);
         border-radius: 8px;
-        padding: 12px;
-        margin-bottom: 12px;
+        background: var(--input);
       }
-      .pet-head {
+      .check-row + .check-row {
+        margin-top: 8px;
+      }
+      .check-row label {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        margin-bottom: 10px;
+        gap: 9px;
+        cursor: pointer;
+        flex: 1;
+        min-width: 0;
       }
-      .pet-head strong {
-        font-size: 13px;
+      .check-row .hint {
+        font-size: 11.5px;
+        color: var(--muted);
       }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 10px 12px;
+      .radio-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
-
-      /* ---- 列表编辑器 ---- */
+      .radio-card {
+        flex: 1 1 220px;
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        padding: 11px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        background: var(--input);
+        cursor: pointer;
+      }
+      .radio-card[data-active='true'] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .radio-card strong {
+        display: block;
+        font-weight: 600;
+      }
+      .radio-card span {
+        font-size: 11.5px;
+        color: var(--muted);
+      }
       .list {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 7px;
       }
       .row {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
       }
-      .row > .grow {
+      .row .grow {
         flex: 1;
+        min-width: 0;
       }
-      .row > .num {
-        width: 84px;
-        flex: none;
-      }
-      .list-head {
+      .subhead {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin: 14px 0 6px;
+        align-items: baseline;
+        gap: 8px;
+        margin: 18px 0 8px;
       }
-      .list-head > strong {
+      .subhead:first-child {
+        margin-top: 0;
+      }
+      .subhead strong {
         font-size: 13px;
       }
+      .subhead .hint {
+        font-size: 11.5px;
+        color: var(--muted);
+      }
       .cat {
-        border: 1px dashed var(--line);
-        border-radius: 8px;
-        padding: 10px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 9px;
+        padding: 12px;
         margin-bottom: 10px;
       }
-
-      /* ---- 状态条 ---- */
-      footer {
-        flex: none;
-        display: flex;
+      .cat-head {
+        display: grid;
+        grid-template-columns: 1.4fr 92px auto auto;
+        gap: 8px;
         align-items: center;
-        gap: 12px;
-        padding: 10px 18px;
-        border-top: 1px solid var(--line);
-        background: var(--panel);
       }
-      #status {
-        flex: 1;
-        font-size: 12px;
+      .inline-hint {
+        font-size: 11.5px;
         color: var(--muted);
-        max-height: 96px;
-        overflow: auto;
-        white-space: pre-wrap;
       }
-      #status.ok {
-        color: var(--ok);
+
+      /* ---- 按钮 ---- */
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--card);
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
       }
-      #status.error {
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent-text);
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-weight: 600;
+        padding: 7px 18px;
+      }
+      button.primary:hover {
+        filter: brightness(1.05);
+        color: #fff;
+      }
+      button.ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--muted);
+        padding: 5px 8px;
+      }
+      button.ghost:hover {
+        background: var(--hover);
+        color: var(--accent-text);
+        border-color: transparent;
+      }
+      button.danger {
+        color: var(--danger);
+        border-color: var(--line-strong);
+      }
+      button.danger:hover {
+        background: var(--danger-soft);
+        border-color: var(--danger);
         color: var(--danger);
       }
-      #status.warn {
-        color: var(--warn);
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
       }
-      .dirty-dot {
-        display: none;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--warn);
+      .row-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 14px;
       }
-      body.dirty .dirty-dot {
+
+      /* ---- 信息行（系统/关于页） ---- */
+      .info-row {
+        display: flex;
+        gap: 12px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .info-row:last-child {
+        border-bottom: 0;
+      }
+      .info-row .k {
+        width: 128px;
+        flex: none;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .info-row .v {
+        flex: 1;
+        min-width: 0;
+        word-break: break-all;
+      }
+      .pill {
         display: inline-block;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 11.5px;
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .pill.muted {
+        background: var(--hover);
+        color: var(--muted);
+      }
+
+      /* ---- 提示条（右下角浮出，与参考图里的深色胶囊同一作用） ---- */
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 62px;
+        transform: translateX(-50%) translateY(8px);
+        padding: 8px 14px;
+        border-radius: 9px;
+        background: #2f323a;
+        color: #fff;
+        font-size: 12px;
+        box-shadow: var(--shadow);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease, transform 0.18s ease;
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
       }
     </style>
   </head>
   <body>
-    <header>
-      <div class="title-row">
-        <h1>whale-pet 设置</h1>
-        <span class="dirty-dot" title="有未保存的改动"></span>
-      </div>
-      <div class="path" id="config-path">配置文件：读取中…</div>
-      <div class="toolbar">
-        <button id="btn-open-file" type="button">打开配置文件所在目录</button>
-        <button id="btn-reload" type="button">放弃改动并重新载入</button>
-        <button id="btn-close" type="button">关闭窗口</button>
-      </div>
-    </header>
-
-    <main>
-      <section>
-        <h2>宠物</h2>
-        <p class="hint">
-          每只宠物一个独立小窗。尺寸是包围盒宽度（高度按 9:16 推出），角落与边距决定它启动时的落点；
-          「回到初始位置」用的是同一套语义。改完点右下角「保存并立即生效」。
-        </p>
-        <div id="pets"></div>
-        <button id="btn-add-pet" type="button">＋ 添加一只宠物</button>
-      </section>
-
-      <section>
-        <h2>拖拽与抛掷物理</h2>
-        <p class="hint">这几项对所有宠物生效（与上游 dsh-pet 的物理参数同一套语义）。</p>
-        <div class="grid" id="physics"></div>
-      </section>
-
-      <section>
-        <h2>动画池</h2>
-        <p class="hint">
-          下拉候选来自素材目录里实际存在的动画（不含扩展名的名字）。名字写错不会让应用起不来，
-          保存时会以「警告」形式列出找不到素材的名字。
-        </p>
-        <div id="pools"></div>
-
-        <div class="list-head"><strong>动画链权重（idle / turn / move）</strong></div>
-        <p class="hint">三者之和 + 各随机分类的 weight 之和应当等于 100。</p>
-        <div class="grid" id="weights"></div>
-
-        <div class="list-head"><strong>随机动作分类</strong></div>
-        <p class="hint">weight 是出现权重；「带文字、镜像会颠倒」的分类勾上 noMirror。</p>
-        <div id="categories"></div>
-        <button id="btn-add-category" type="button">＋ 添加分类</button>
-
-        <div class="list-head"><strong>移动池（moves）</strong></div>
-        <p class="hint">
-          这里只编辑动作名列表；每个动作的参数覆盖（params）保持配置文件里的原值
-          ——需要细调请用上面的「打开配置文件所在目录」直接改文件（改完会自动热重载）。
-        </p>
-        <div id="moves"></div>
-      </section>
-
-      <section>
-        <h2>开机自启</h2>
-        <p class="hint">写入当前用户的启动项（不需要管理员权限）。这一项**立即生效**，不经过「保存」。</p>
-        <label class="check"><input type="checkbox" id="autostart" /> 开机时自动启动 whale-pet</label>
-      </section>
-    </main>
-
-    <footer>
-      <div id="status">正在读取配置…</div>
-      <button id="btn-save" class="primary" type="button">保存并立即生效</button>
-    </footer>
-
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="logo" id="brand-logo"></div>
+          <div>
+            <strong>whale-pet</strong>
+            <span>桌宠设置</span>
+          </div>
+        </div>
+        <nav class="nav" id="nav"></nav>
+        <div class="sidebar-foot" id="sidebar-foot">读取中…</div>
+      </aside>
+      <main class="content">
+        <header class="topbar">
+          <div class="crumbs" id="crumbs"></div>
+          <button id="btn-open-file" type="button">打开配置文件</button>
+          <button id="btn-reload" type="button">放弃改动</button>
+        </header>
+        <div class="content-body" id="content-body"></div>
+        <footer class="statusbar">
+          <div id="status-text">正在读取配置…</div>
+          <button id="btn-save" class="primary" type="button">保存并立即生效</button>
+        </footer>
+      </main>
+    </div>
+    <div class="toast" id="toast"></div>
+    <datalist id="anim-options"></datalist>
     <script type="module" src="/src/settings-page.ts"></script>
   </body>
 </html>

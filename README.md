@@ -54,6 +54,17 @@ M0 的目标是验证"Tauri 能不能把这套桌宠跑起来"这条链路上所
 > 注意：从设置窗口保存会**整体重写**配置文件（JSON 不存注释），文件开头会写明这一点，
 > 上一版会备份成 `config.jsonc.bak`。想保留手写注释就别从界面保存。
 
+### M2.5「外观与结构升级」已完成
+
+| 能力 | 说明 |
+| --- | --- |
+| 应用与托盘图标 | 图标是**代码画的**（`icon_art.rs`，一份代码产出 `.ico` 与托盘图标）；`cargo run --example make-icon` 重新生成 |
+| 自绘托盘菜单 | 托盘右键弹出浅/深色圆角菜单（跟随系统）：显示/隐藏（一个切换项）、回到初始位置、动作点播、设置、退出 |
+| 设置界面 | 左侧竖向导航 + 每只宠物独立页面 + 通用参数页；跟随系统深浅色 |
+| 每只宠物独立行为 | 每只宠物可**单独覆盖**动画池与权重（不设则跟随全局默认），右键菜单与托盘点播都按它自己的池 |
+
+> 托盘菜单里的"显示/隐藏"是**一个**切换项，文案随状态变；开机自启移到了设置窗口的「启动与系统」。
+
 **尚未实现**（见 [`docs/ROADMAP.md`](docs/ROADMAP.md)）：
 多宠物跨窗碰撞、点击积分、高 DPI 与多显示器观感回归、从 dsh-pet 一键导入、
 LLM 能力（碎碎念/对话/表情包/余额）、安装包产出。
@@ -122,7 +133,8 @@ pwsh -File scripts\import-animations.ps1
 
 ```powershell
 cd src-tauri
-cargo run --bin logic-smoke      # 51 项断言：配置解析/校验/写回、路径防穿越、JSONC 注释、几何换算
+cargo run --bin logic-smoke      # 60 项断言：配置解析/校验/写回、每宠独立动画池、路径防穿越、JSONC 注释、几何换算
+cargo run --example make-icon    # 重新生成 icons/（图标是代码画的，见 src/icon_art.rs）
 ```
 
 ---
@@ -184,15 +196,22 @@ M2 又加了两组**走真实代码路径**的探针（自动化验证用，默�
 
 ```powershell
 # 设置窗口：打开同一个 settings_window::open()，再由页面自己点按钮（页面 → 命令 → 写盘 → 重建）
-$env:WHALE_PET_DIAG_SETTINGS = 'save'          # 1 | save | autostart | addpet | delpet
-# 托盘：按 id 走一遍托盘菜单的 match 分支（真实托盘点击注不进去，见 VERIFICATION 9.9）
-$env:WHALE_PET_DIAG_TRAY = 'pet-hide-all,pet-show-all,pet-home,pet-settings'
+$env:WHALE_PET_DIAG_SETTINGS = 'save'          # 1 | save | autostart | addpet | delpet | ownbehaviour | nav:physics
+# 托盘菜单：弹出真实菜单窗（截图用），或按序走一遍动作层
+$env:WHALE_PET_DIAG_TRAY_MENU = '5000:picker'  # 5 秒后弹出并展开"动作点播"
+$env:WHALE_PET_DIAG_TRAY = 'toggle,home,anim:待机呼吸休闲,settings'
 pnpm tauri dev
+```
+
+界面类改动的检查方式是**截图**（WebView2 的内容 `PrintWindow` 抓不到，脚本走屏幕合成截图）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -TitleLike '设置'
 ```
 
 两个钩子都只用合成采样驱动**与真实输入同一条代码路径**，不改变业务语义；
 `autotest=2` 的场景与结果见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 第 6.4 节，
-M2 探针的证据见第 9 节。
+M2 / M2.5 探针的证据见第 9 / 10 节。
 
 ---
 
@@ -202,11 +221,13 @@ M2 探针的证据见第 9 节。
 .
 ├─ index.html                    桌宠窗口页面（透明布局 + 双缓冲 video + 命中区）
 ├─ bubble.html / menu.html       气泡窗 / 右键菜单窗页面（都是独立小窗）
-├─ settings.html                 设置窗口页面（普通窗口，M2）
+├─ settings.html                 设置窗口页面（左侧导航 + 跟随系统深浅色）
+├─ tray-menu.html                托盘菜单页面（自绘菜单，浅/深色跟随系统）
 ├─ src/
 │  ├─ main.ts                    入口：取配置 → 建通道 → 装配运行时
-│  ├─ settings-page.ts           设置页逻辑：整份配置进出，改哪几个字段就动哪几个（M2）
-│  ├─ menu-page.ts               菜单页逻辑：上游菜单树 + 桌面端本地工具项
+│  ├─ settings-page.ts           设置页逻辑：整份配置进出，改哪几个字段就动哪几个
+│  ├─ tray-menu-page.ts          托盘菜单逻辑：主菜单 / 动作点播，动作交给宿主执行
+│  ├─ menu-page.ts               右键菜单页逻辑：上游菜单树 + 桌面端本地工具项
 │  ├─ bridge/
 │  │  ├─ tauri.ts                window.__TAURI__ 的唯一访问点（含类型声明）
 │  │  ├─ contract.ts             Rust ↔ 前端 数据契约（与 model.rs 一一对应）
@@ -225,23 +246,27 @@ M2 探针的证据见第 9 节。
 │  │  ├─ lib.rs                  启动装配：插件 → 协议 → 配置 → 几何 → 窗口 → 托盘 → 轮询线程
 │  │  ├─ main.rs                 二进制入口（release 隐藏控制台）
 │  │  ├─ pet_window.rs           窗口创建/定位/移动/穿透翻转（每宠一个局部小窗）
-│  │  ├─ tray.rs                 托盘菜单与它的动作分发（M2）
-│  │  ├─ settings_window.rs      设置窗口的建/显/关（普通窗口，M2）
-│  │  ├─ reload.rs               配置热重载与"保存即生效"（拆窗重建 + 托盘重建，M2）
+│  │  ├─ tray.rs                 托盘图标与动作分发（左键切换显隐，右键弹菜单）
+│  │  ├─ tray_menu.rs            自绘托盘菜单窗：摆位 / 外点关闭 / 按内容变高
+│  │  ├─ settings_window.rs      设置窗口的建/显/关（普通窗口）
+│  │  ├─ reload.rs               配置热重载与"保存即生效"（拆窗重建）
+│  │  ├─ icon_art.rs             **图标的绘制代码**（SDF；exe/托盘共用一份）
 │  │  ├─ pet_protocol.rs         自定义协议 pet://（提供动画/字体等本地素材）
 │  │  ├─ display.rs              显示器几何 + 变化轮询（并集，不是外接矩形）
-│  │  ├─ config.rs               配置读取/校验/JSONC 注释剥离/写回（M2）
+│  │  ├─ config.rs               配置读取/校验/JSONC 注释剥离/写回/每宠池解析
 │  │  ├─ model.rs                数据契约（与 contract.ts 一一对应）
-│  │  ├─ commands.rs             前端可调用的命令（含 M2 的设置读写）
+│  │  ├─ commands.rs             前端可调用的命令
 │  │  ├─ state.rs                共享状态（配置可在运行期替换）
 │  │  ├─ watchdog.rs             取锁/窗口操作计时 + 主线程健康看门狗
 │  │  ├─ diagnostics.rs          诊断日志落盘 + 受控自测/探针入口
-│  │  └─ bin/logic-smoke.rs      纯逻辑冒烟检查（51 项断言）
+│  │  └─ bin/logic-smoke.rs      纯逻辑冒烟检查（60 项断言）
+│  ├─ examples/make-icon.rs      图标生成工具（png/ico 只在 dev-dependencies）
+│  ├─ icons/                     生成的图标产物（ico 多尺寸 + png + 托盘版）
 │  └─ capabilities/default.json  最小权限集（宠物/气泡/菜单/设置四类窗口）
 ├─ reference/shared/             ← 从上游逐字节拷贝的纯逻辑（**零改动**）
 ├─ config/default-config.jsonc   默认配置模板（编译进 exe，首次运行释放）
 ├─ assets/webm/                  内置示例动画（编译进 exe）
-├─ scripts/                      环境激活、素材导入、窗口探针
+├─ scripts/                      环境激活、素材导入、窗口探针、**窗口截图**
 └─ docs/                         拷贝清单、验证记录、路线图、Tauri 配置说明
 ```
 

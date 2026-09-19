@@ -259,9 +259,9 @@ fn create_one<R: Runtime>(
     let box_origin = anchor_box(pet, primary);
     let origin = anchored_window_origin(box_origin, &window_size, &box_offset, primary);
 
-    // 素材解析：待机 / 点击回应名字**从动画池派生**（见 config::pet_animation_defaults），
-    // 池为空的情况已在 config.validate_animations 里拦下，这里只做兜底取值
-    let defaults = crate::config::pet_animation_defaults(config);
+    // 素材解析：待机 / 点击回应名字**从这只宠物实际生效的动画池派生**
+    // （见 config::pet_animation_defaults：每只宠物可以有一套自己的池）
+    let defaults = crate::config::pet_animation_defaults(pet, config);
     let idle = if pet.idle.trim().is_empty() { defaults.idle } else { pet.idle.clone() };
     let click = if pet.click.trim().is_empty() { defaults.click } else { pet.click.clone() };
 
@@ -363,9 +363,10 @@ fn create_one<R: Runtime>(
                 margin_y: pet.position.margin_y,
             },
             physics: *physics,
-            // 动画池与权重原样下发：选择逻辑全在前端 shared 的 pickers 里（与上游同源）
-            animations: config.animations.clone(),
-            animation_weights: config.animation_weights,
+            // 动画池与权重原样下发**这只宠物实际生效的那一份**：
+            // 覆盖了就用它自己的，没覆盖就用全局（选择逻辑仍全在前端 shared 的 pickers 里）
+            animations: config.effective_animations(pet),
+            animation_weights: config.effective_weights(pet),
             // 素材清单下发**基名**（不含扩展名）：前端 animUrl() 拼接即可，
             // 同时可用于判断配置引用的动画是否存在（避免 404）
             available_animations: available.iter().map(|file| strip_extension(file)).collect(),

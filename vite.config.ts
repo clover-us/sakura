@@ -35,11 +35,23 @@ export default defineConfig({
       //      EBUSY（Windows 上文件仍被占用）并**把整个 dev server 打挂**——实测过一次，
       //      表现为"改了一下 Rust 文件，前端热更新服务直接退出"。
       //   ③ Cargo 的 target/ 同样不该进监听（几十万个文件）。
-      //
-      // 第二条同样适用于仓库里的任何目录：编辑器做原子写时会先建
-      // `.<文件名>.<pid>.<uuid>.tmpdir/` 再改名，chokidar 一样会 EBUSY 崩掉（docs 下实测过一次）。
-      // 这类临时目录与 VCS/缓存目录都不该进监听。
-      ignored: ['**/src-tauri/**', '**/.*.tmpdir/**', '**/.git/**', '**/node_modules/**', '**/dist/**'],
+      ignored: [
+        '**/src-tauri/**',
+        '**/.git/**',
+        '**/node_modules/**',
+        '**/dist/**',
+        // 各类"原子写"临时文件：`.name.tmpdir/`、`name~XXXX.TMP`、`*.tmp`
+        '**/.*.tmpdir/**',
+        '**/*~*',
+        '**/*.tmp',
+        '**/*.TMP',
+      ],
+      // **改用轮询**：Windows 上 `fs.watch` 对"正在被改名/仍被占用的临时文件"会抛 EBUSY，
+      // 而 chokidar **不会把这个错误降级**——直接打挂 dev server（实测被打挂三次：
+      // 两个编辑器的两种临时文件命名各命中一次）。轮询走的是 stat 比较，没有这个失败模式；
+      // 本项目源码只有几百个文件，300ms 的轮询代价可以忽略。
+      usePolling: true,
+      interval: 300,
     },
   },
 
@@ -53,12 +65,13 @@ export default defineConfig({
     target: 'chrome110',
     rollupOptions: {
       // 多页面入口：宠物窗（index.html）+ 气泡窗（bubble.html）+ 菜单窗（menu.html）
-      //              + 设置窗（settings.html）
+      //              + 设置窗（settings.html）+ 托盘菜单窗（tray-menu.html）
       input: {
         main: `${rootDir}index.html`,
         bubble: `${rootDir}bubble.html`,
         menu: `${rootDir}menu.html`,
         settings: `${rootDir}settings.html`,
+        trayMenu: `${rootDir}tray-menu.html`,
       },
     },
   },
