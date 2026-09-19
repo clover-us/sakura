@@ -1,0 +1,9 @@
+# pnpm 设置文件（pnpm 10+ 的配置已从 package.json 的 pnpm 字段搬到这里）
+#
+# allowBuilds：允许执行安装脚本的依赖白名单。
+# 为什么需要它：pnpm 10 起默认**禁止**依赖运行安装脚本（供应链安全），
+# 而 vite 依赖的 esbuild 必须在 postinstall 阶段下载对应平台的二进制，
+# 不放行就会报 ERR_PNPM_IGNORED_BUILDS，且 vite 无法启动。
+# 本文件由 pnpm 11 首次安装时自动生成，这里把 esbuild 明确置为 true。
+allowBuilds:
+  esbuild: true

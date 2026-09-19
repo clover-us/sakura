@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- 桌宠窗口的页面标题对用户不可见（无边框无标题栏），仅供调试识别 -->
+    <title>whale-pet 桌宠窗口</title>
+    <style>
+      /*
+       * 透明窗样式约定（与 Rust 侧窗口参数配套）：
+       *   - html/body 必须完全透明：窗口本身是 transparent，任何不透明背景都会
+       *     在宠物四周画出可见色块；
+       *   - overflow:hidden + 无滚动条：窗口尺寸 = 宠物包围盒 + 外扩余量，不需要滚动；
+       *   - user-select:none：避免拖拽时选中"文字"（视频虽无可选文本，但气泡将来会有）；
+       *   - 所有子元素默认 pointer-events:none，只有身体命中区打开：
+       *     窗口内其余透明像素即便窗口本身是可交互状态，也不该抢走鼠标事件。
+       */
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+        cursor: default;
+        font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      /* 宠物根节点：绝对定位在窗口内 (marginX, marginY)，尺寸 = 包围盒 size × size*9/16。
+         窗口移动由 Rust 负责，本页面**只做窗口内布局**，不做屏幕级定位。 */
+      #pet-box {
+        position: absolute;
+        transform-origin: 50% 100%; /* Q 弹挤压以脚底为锚点，与浏览器/桌面既有实现一致 */
+        will-change: transform;
+        pointer-events: none;
+      }
+      /* 舞台与包围盒等大，视频与命中区都铺满它 */
+      #pet-stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      /* 双缓冲视频：两层交替显示，靠 opacity 交叉淡入实现"零空白帧"切换。
+         两张都铺满舞台，object-fit:contain 保证不变形；
+         初始都不可见，等首帧就绪后再点亮，避免闪白/闪黑。 */
+      .pet-video {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        opacity: 0;
+        transition: opacity 0.18s ease;
+        pointer-events: none;
+        background: transparent;
+      }
+      .pet-video.is-front {
+        opacity: 1;
+      }
+      /* 身体命中区：唯一可交互区域。
+         几何按 dsh-pet 的 HIT_BOX（640×360 画布内的身体框）等比换算，
+         由 TS 运行时写入 left/top/width/height；此处的样式只给光标。 */
+      #pet-hit {
+        position: absolute;
+        pointer-events: auto;
+        z-index: 2;
+      }
+      #pet-hit.is-dragging {
+        cursor: grabbing;
+      }
+      /* 配置/资源加载失败的提示条：**大声报错**（对齐上游"绝不静默兜底"的原则） */
+      #pet-error {
+        position: fixed;
+        left: 50%;
+        top: 12px;
+        transform: translateX(-50%);
+        max-width: 92vw;
+        padding: 8px 14px;
+        border-radius: 10px;
+        background: rgba(217, 79, 61, 0.95);
+        color: #fff;
+        font-size: 13px;
+        line-height: 1.5;
+        word-break: break-all;
+        display: none;
+        z-index: 99;
+        pointer-events: none;
+      }
+      #pet-error.is-visible {
+        display: block;
+      }
+      /* 无障碍：用户要求减少动效时，直接关掉交叉淡入（Q 弹由 TS 侧检测后跳过） */
+      @media (prefers-reduced-motion: reduce) {
+        .pet-video {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 宠物根节点：窗口内唯一的内容容器 -->
+    <div id="root">
+      <div id="pet-box">
+        <div id="pet-stage">
+          <!-- 双缓冲：front 与 back 交替。video 元素必须静音才能自动播放（浏览器策略） -->
+          <video id="pet-video-a" class="pet-video" muted playsinline preload="auto"></video>
+          <video id="pet-video-b" class="pet-video" muted playsinline preload="auto"></video>
+          <!-- 身体命中区：鼠标进/出它决定窗口翻转"可交互 / 点击穿透" -->
+          <div id="pet-hit"></div>
+        </div>
+      </div>
+    </div>
+    <div id="pet-error"></div>
+
+    <!--
+      资源根地址注入：自定义协议在各平台的 URL 形式不同
+      （Windows/Android = http://pet.localhost，其它 = pet://localhost），
+      因此由宿主在构建时替换这一处常量（Tauri 会把该变量注入到页面脚本里）。
+      前端只读 window.__PET_ENV__.assetBaseUrl，不做平台判断。
+    -->
+    <script>
+      window.__PET_ENV__ = { assetBaseUrl: 'http://pet.localhost' };
+    </script>
+
+    <!--
+      加载顺序说明：
+        1) 上一段脚本注入资源根地址（window.__PET_ENV__）；
+        2) 业务入口是 ESM 模块，Vite 会把 reference/shared 的纯逻辑一并打包。
+    -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

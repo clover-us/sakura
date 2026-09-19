@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+
+# Tauri 构建期自动生成的权限 schema（含本机绝对路径，不应入库；build.rs 会自动重建）
+src-tauri/gen/
+
+# 编辑器与系统
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+
+# pnpm
+.pnpm-store/
+
+# 诊断/临时产物（运行期生成在应用数据目录，这里只兜底工作目录里的意外产物）
+*.log

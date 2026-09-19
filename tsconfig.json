@@ -1,0 +1,45 @@
+{
+  // 前端（webview 侧）类型配置。
+  //
+  // 注意：tsconfig.json 允许 // 行注释与 /* */ 块注释（JSONC），
+  // 但**不允许**用自定义键当注释（tsc 会报 "Unknown compiler option"）。
+  //
+  // strict 全开：本项目到处是坐标/几何换算，类型一宽松就会埋下难以排查的错位 bug。
+  //
+  // allowImportingTsExtensions：reference/shared 下的纯逻辑是从上游 dsh-pet 原样拷贝的，
+  //   其内部 import 带 .ts 后缀（上游 Node --experimental-strip-types 的要求）。
+  //   为保持「拷贝文件零改动」，这里必须允许该写法；产出由 vite 负责（noEmit）。
+  //
+  // paths['@shared/*']：指向拷贝来源目录，集中一处便于日后整体替换为 npm 包或 submodule。
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    // 显式声明需要的类型包（不依赖自动注入）：
+    //   vite/client —— import.meta.env 等前端类型
+    //   node        —— vite.config.ts 读取源码目录时用到的 node:url
+    "types": ["vite/client", "node"],
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["reference/shared/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "reference/shared/**/*.ts", "vite.config.ts"]
+}

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>whale-pet 气泡</title>
+    <style>
+      /*
+       * 气泡小窗的样式约定（与宠物窗共用同一套视觉，但与它**完全独立**）：
+       *   - 整窗透明：只有气泡本体可见；
+       *   - 本窗口**永远是点击穿透的**（见 Rust 侧 `bubble.rs`：创建时就
+       *     `set_ignore_cursor_events(true)`），因此这里的元素一律 `pointer-events:none`，
+       *     不参与任何鼠标交互——它是一个纯显示窗；
+       *   - 气泡宽度随内容自适应（`inline-block + max-width`），高度由行数决定，
+       *     窗口尺寸由宿主按文本长度预估（`show_bubble` 的 width/height 参数）。
+       */
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      body {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        /*
+         * 四周留出**透明余量**，给投影和尖角呼吸的空间：
+         *   - 左右/上方 14px：投影要在窗口内淡出。不留的话投影被窗口边界切出一条硬边，
+         *     看上去就是"气泡旁边糊了一块灰色虚影"（用户实测反馈）；
+         *   - 下方 18px：尖角画在气泡外面（`bottom:-9px`），再加投影余量。
+         * 这几个数必须与 Rust 侧 `bubble.rs::estimate` 里的同名常量一致
+         * （窗口尺寸是按它们估算的，不一致就会重新出现裁切）。
+         */
+        padding: 14px 14px 18px;
+      }
+      /* 气泡本体：白色圆润泡 + 底部小三角（指向宠物），与宠物窗里的气泡同一套视觉 */
+      #bubble {
+        position: relative;
+        max-width: 100%;
+        padding: 9px 15px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.97);
+        border: 1px solid rgba(43, 43, 43, 0.08);
+        color: #2b2b2b;
+        font-family: 'Microsoft YaHei UI', 'Segoe UI', 'PingFang SC', sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+        /* 投影半径要小于上面留的透明余量，否则又会被窗口裁掉 */
+        box-shadow:
+          0 5px 14px rgba(15, 23, 42, 0.16),
+          0 1px 3px rgba(15, 23, 42, 0.1);
+        opacity: 0;
+        transform: translateY(4px) scale(0.98);
+        transition:
+          opacity 0.22s ease,
+          transform 0.22s ease;
+      }
+      #bubble::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: -9px;
+        transform: translateX(-50%);
+        border: 9px solid transparent;
+        border-top-color: rgba(255, 255, 255, 0.97);
+        border-bottom: none;
+      }
+      #bubble.is-on {
+        opacity: 1;
+        transform: none;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #bubble {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 气泡内容由宿主经 `eval` 注入（见 bubble.rs::show_bubble），此处只留容器 -->
+    <div id="bubble"><span id="bubble-text"></span></div>
+  </body>
+</html>

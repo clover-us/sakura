@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>whale-pet 菜单</title>
+    <style>
+      /*
+       * 菜单窗的样式约定：
+       *   - 整窗透明：菜单之外的地方什么也不画（那块区域虽然会吃点击，但看起来是桌面）；
+       *   - 本窗口**必须能收鼠标**（与气泡相反）：`pointer-events` 不能禁用，
+       *     否则菜单项点不动；
+       *   - 面板本体完全由上游 `shared/menu.ts` 的 MENU_CSS 负责，这里只管窗口级别的底色。
+       */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 菜单 DOM 由页面脚本挂载（见 src/menu-page.ts），此处只留空壳 -->
+    <script type="module" src="/src/menu-page.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,48 @@
+[package]
+name = "whale-pet-desktop"
+version = "0.1.0"
+description = "whale-pet 独立桌面端：透明置顶小窗桌宠（Tauri v2）"
+authors = ["whale-pet"]
+edition = "2021"
+rust-version = "1.77"
+# 本 crate 有两个 bin（whale-pet-desktop 与冒烟程序 logic-smoke）。
+# 不指定 default-run 时 `cargo run`（tauri dev 内部就用它）会因无法判断跑哪个而报错：
+#   `cargo run` could not determine which binary to run
+default-run = "whale-pet-desktop"
+
+# ============================================================================
+#  lib 段：注意 crate-type 只保留 rlib
+# ----------------------------------------------------------------------------
+#  官方模板默认是 ["staticlib", "cdylib", "rlib"]，其中 staticlib / cdylib
+#  只服务移动端（Android / iOS）。本机是 x86_64-pc-windows-gnu 工具链，
+#  cdylib 会把约 9 万个符号全部导出，超过 PE/COFF 的 65535 导出序号上限，
+#  直接链接失败：ld.exe: error: export ordinal too large
+#  （Rust 已知问题 rust-lang/rust#92212，MSVC 工具链上不出现）
+#  桌面端只需要 rlib。日后若要做移动端，请换 MSVC 工具链再改回三件套。
+# ============================================================================
+[lib]
+name = "whale_pet_desktop_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# ---------------------------------------------------------------------------
+# 依赖刻意保持最小：基础 Tauri 只带 core（窗口 / 事件 / IPC），不启用任何插件。
+# 需要新能力（托盘、自启、单实例、位置等）时再逐个引入对应插件，
+# 每引入一个都会带来一次依赖解析与链接，故按里程碑逐个加，不预先铺满。
+# ---------------------------------------------------------------------------
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 自定义协议 pet:// 的路径百分号解码（中文动画文件名必需）
+percent-encoding = "2.3"
+
+# 发行构建的体积/性能取向（对齐 Tauri 官方 size 指南）
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

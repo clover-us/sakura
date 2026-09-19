@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "各窗口的最小权限集：只需要事件通道（core:event:default）。应用自身的命令（get_pet_config / show_menu 等）由 invoke_handler 注册，不经过权限系统。",
+  "windows": ["pet-*", "bubble-*", "menu-*"],
+  "permissions": ["core:event:default"],
+  "//排障入口": [
+    "本目录下的诊断能力（合成输入注入、实时探针、合成拖拽）都由**环境变量**开关控制，",
+    "默认完全不启用，也不属于运行路径：",
+    "  WHALE_PET_DIAG_PRESS=1|drag  → 注入合成 pointerdown / 合成拖拽（坐标链与跟手验证）",
+    "  WHALE_PET_AUTOTEST=1..4      → 页面侧受控自测（拖拽甩抛 / 命中区外松手 / 实时探针 / 按键保持）",
+    "细节见 docs/VERIFICATION.md 与 src-tauri/src/diagnostics.rs。"
+  ]
+}
