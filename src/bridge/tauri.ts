@@ -25,6 +25,18 @@ interface TauriGlobal {
     /** 监听后端 emit 的事件；返回取消监听的函数 */
     listen<T>(event: string, handler: (e: TauriEvent<T>) => void): Promise<() => void>;
   };
+  window: {
+    /** 取当前窗口的句柄（拖动、改尺寸等窗口操作都从这里进） */
+    getCurrentWindow(): {
+      /**
+       * 交给系统接管"按下并拖动"。
+       *
+       * 只用于**无边框窗口的自定义拖动区**（目前只有对话输入窗的握柄）：
+       * 系统接管比自己算偏移更跟手，也不会在窗口移动时抖动。
+       */
+      startDragging(): Promise<void>;
+    };
+  };
 }
 
 declare global {
@@ -71,4 +83,18 @@ export async function listen<T>(event: string, handler: (payload: T) => void): P
     throw new Error(`Tauri 全局对象不可用，无法监听事件 ${event}`);
   }
   return tauri.event.listen<T>(event, (e) => handler(e.payload));
+}
+
+/**
+ * 让当前窗口开始跟随鼠标拖动（系统接管到鼠标松开为止）。
+ *
+ * 为什么不用 `data-tauri-drag-region` 属性：那条路要求属性正好落在事件目标上，
+ * 我们的握柄里还有图标等子元素，命中判定容易漏；显式调用更可控，出错也能落日志。
+ */
+export async function startDragging(): Promise<void> {
+  const tauri = window.__TAURI__;
+  if (!tauri?.window?.getCurrentWindow) {
+    throw new Error('Tauri 全局对象缺少 window.getCurrentWindow，无法拖动窗口');
+  }
+  await tauri.window.getCurrentWindow().startDragging();
 }

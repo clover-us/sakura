@@ -20,7 +20,7 @@
  * **不要**在页面里自己决定要不要抢焦点（否则宠物窗那边的"绝不抢焦点"纪律会被悄悄破坏）。
  */
 import { petLog, petLogError, setLogLabel } from './bridge/log.ts';
-import { invoke } from './bridge/tauri.ts';
+import { invoke, startDragging } from './bridge/tauri.ts';
 
 /** 结构化失败（与 Rust `LlmErrorDto` 同构） */
 interface LlmError {
@@ -93,6 +93,25 @@ function focusInput(): void {
   petLog('对话: 输入框已就绪');
 }
 
+/**
+ * 拖动输入条（用户要求：把输入框做成可拖动）。
+ *
+ * 只绑在**握柄**上：输入框里的按下必须留给文本选择、按钮必须能点，
+ * 整条都能拖会导致"想选字却把窗口拖走了"。
+ * 拖动本身交给系统的 `startDragging`（比自己算偏移更跟手，窗口移动时也不抖）。
+ */
+function bindDrag(): void {
+  const grip = byId('grip');
+  grip.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    // 阻止默认行为：否则按住握柄会被当成开始选文字/拖拽 DOM
+    event.preventDefault();
+    // 留一行日志：拖动"没反应"时，先要能分清是"没点到握柄"还是"点了但系统没接管"
+    petLog('对话: 握柄按下，交给系统拖动');
+    void startDragging().catch((err: unknown) => petLogError('对话: 拖动失败', err));
+  });
+}
+
 declare global {
   interface Window {
     __whalePetChat?: { focusInput: () => void };
@@ -115,6 +134,7 @@ function bootstrap(): void {
     }
   });
   byId('send').addEventListener('click', () => void send());
+  bindDrag();
   window.__whalePetChat = { focusInput };
   petLog('对话: 页面就绪');
 }

@@ -25,7 +25,10 @@ use crate::watchdog;
 /// 窗口标签前缀（与宠物窗 `pet-*`、气泡 `bubble-*`、菜单 `menu-*`、托盘菜单区分开）
 pub const CHAT_LABEL_PREFIX: &str = "chat-";
 /// 输入窗尺寸（够放一行中文字 + 发送提示；输入框内部自增高，窗口不变）
-const WIDTH: f64 = 380.0;
+///
+/// 宽度按用户要求收窄了五分之一（380 → 304）：输入条只占屏幕一小条，
+/// 不挡桌面上的东西；窗口变窄后**仍然可以拖动**（左侧有握柄，见 chat.html）。
+const WIDTH: f64 = 304.0;
 const HEIGHT: f64 = 54.0;
 
 /// 输入窗标签

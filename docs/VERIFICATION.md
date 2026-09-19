@@ -2167,3 +2167,54 @@ let agent: ureq::Agent = ureq::Agent::config_builder()
 **教训（写给下次加辅助窗的人）**：新增一种按宠物派生的辅助窗时，有**四处**要一起改——
 ① `setup` 预建、② 热重载重建、③ 热重载拆除清单、④ 打开时的按需创建后路。
 漏掉 ②③ 中任何一个，都会得到"平时好好的、保存配置后就坏"这种最难查的 bug。
+## 13.13 用户要求：输入条可拖动 + 长度减少五分之一
+
+### 改动
+
+| 项 | 前 | 后 |
+| --- | --- | --- |
+| 输入窗宽度 | 380 | **304**（正好少五分之一） |
+| 拖动 | 不可拖（拖动区=整个窗口的空白处也没有） | 输入条**左侧握柄**按住即可拖（系统接管） |
+
+**为什么只有握柄能拖**：输入框要能选文本、发送按钮要能点；整条都当拖动区会让
+"想选字却把窗口拖走了"。握柄是 16px 宽的一条，鼠标移上去变 `grab`。
+
+### 踩到的坑：Tauri 2 的窗口 API 走权限系统
+
+握柄写完第一次按下去，**窗口纹丝不动**，日志里是：
+
+```text
+[chat] 对话: 握柄按下，交给系统拖动
+[chat] ERROR 对话: 拖动失败 | window.start_dragging not allowed.
+        Permissions associated with this command: core:window:allow-start-dragging
+```
+
+`capabilities/default.json` 里原来只有 `core:event:default`，而且窗口列表里**也没有 `chat-*`**。
+两处都要补（并按最小授权：只给 `core:window:allow-start-dragging` 这一条，
+**不授予 `core:window:default`**——页面没有理由能关窗/改尺寸/最小化）：
+
+```json
+"windows": ["pet-*", "bubble-*", "menu-*", "chat-*", "settings"],
+"permissions": ["core:event:default", "core:window:allow-start-dragging"]
+```
+
+> 教训：**页面直接调窗口 API** 的功能（拖动、改尺寸、置顶…）都要过 capabilities。
+> 这类漏授权在本机 mock、冒烟检查、类型检查里**全都测不出来**，
+> 只有真按下去那一刻才会以"运行时报错"的形式出现。写进 13.12 的"四处清单"里，
+> 现在这条要加进去当第五处：**⑤ 新窗口的 capabilities 权限**。
+
+### 验证：真实鼠标注入拖动
+
+不是"看代码觉得对"，而是用 `SetCursorPos` + `mouse_event` 注入一次真实拖动
+（先把对话窗设为前台，否则第一下只会激活窗口）：
+
+```text
+拖动前：(2256,71) 304x54
+拖动后：(1996,221)
+位移：Δx=-260 Δy=150（与注入的位移完全一致）
+
+[chat] 对话: 握柄按下，交给系统拖动      ← 旧构建：紧接着 "拖动失败 | not allowed"
+[chat] 对话: 握柄按下，交给系统拖动      ← 新构建：无报错，窗口跟着走
+```
+
+截图更新为 [`screenshots/chat-window.png`](screenshots/README.md)（304 宽，左侧可见六点握柄）。

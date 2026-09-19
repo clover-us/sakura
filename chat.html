@@ -49,7 +49,7 @@
         align-items: center;
         gap: 8px;
         width: 100%;
-        padding: 6px 8px 6px 12px;
+        padding: 6px 8px 6px 6px;
         border-radius: 999px;
         background: var(--panel);
         border: 1px solid var(--line);
@@ -57,6 +57,36 @@
       }
       .bar:focus-within {
         border-color: var(--accent);
+      }
+      /*
+       * 拖动握柄：整条输入条只有这一小块负责"拖窗口"。
+       *
+       * 为什么不是整条都能拖：输入框要能选中文本、按钮要能点，
+       * 把拖动铺满整条会让"想选字却把窗口拖走了"。握柄上按下即交给系统拖动（见 chat-page.ts）。
+       */
+      .grip {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        align-self: stretch;
+        border-radius: 999px;
+        color: var(--muted);
+        cursor: grab;
+        /* 拖动时不选中文字、不出现"文本光标" */
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .grip:hover {
+        color: var(--accent);
+        background: var(--hover);
+      }
+      .grip:active {
+        cursor: grabbing;
+      }
+      .grip svg {
+        display: block;
       }
       input {
         flex: 1;
@@ -104,6 +134,18 @@
   </head>
   <body>
     <div class="bar">
+      <div class="grip" id="grip" title="按住拖动输入条">
+        <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true">
+          <g fill="currentColor">
+            <circle cx="2.5" cy="4" r="1.4" />
+            <circle cx="7.5" cy="4" r="1.4" />
+            <circle cx="2.5" cy="8" r="1.4" />
+            <circle cx="7.5" cy="8" r="1.4" />
+            <circle cx="2.5" cy="12" r="1.4" />
+            <circle cx="7.5" cy="12" r="1.4" />
+          </g>
+        </svg>
+      </div>
       <input id="input" type="text" maxlength="2000" placeholder="说点什么…（回车发送，Esc 关闭）" />
       <button id="send" type="button">发送</button>
     </div>

@@ -1,14 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "各窗口的最小权限集：只需要事件通道（core:event:default）。应用自身的命令（get_pet_config / show_menu / get_settings / save_settings 等）由 invoke_handler 注册，不经过权限系统；设置窗口因此不需要任何窗口/对话框插件权限（关闭它走的是自家命令 close_settings）。",
-  "windows": ["pet-*", "bubble-*", "menu-*", "settings"],
-  "permissions": ["core:event:default"],
+  "description": "各窗口的最小权限集：事件通道（core:event:default）+ 对话窗拖动输入条所需的 core:window:allow-start-dragging。应用自身的命令（get_pet_config / show_menu / get_settings / save_settings / llm_chat 等）由 invoke_handler 注册，不经过权限系统。**刻意不授予 core:window:default**：拖动只用到 start_dragging 这一条，没理由让页面能关窗/改尺寸/最小化。",
+  "windows": ["pet-*", "bubble-*", "menu-*", "chat-*", "settings"],
+  "permissions": ["core:event:default", "core:window:allow-start-dragging"],
+  "//为什么 chat-* 需要这条权限": [
+    "对话输入窗是无边框窗，输入条左侧的握柄按下后要调 window.startDragging() 交给系统拖动。",
+    "Tauri 2 的窗口 API 走权限系统：不写这一条，一按握柄就报",
+    "  window.start_dragging not allowed. Permissions associated with this command: core:window:allow-start-dragging",
+    "（用户要求「输入框可拖动」时实测撞到）。其余窗口不需要拖动能力。"
+  ],
   "//排障入口": [
     "本目录下的诊断能力（合成输入注入、实时探针、合成拖拽）都由**环境变量**开关控制，",
     "默认完全不启用，也不属于运行路径：",
     "  WHALE_PET_DIAG_PRESS=1|drag  → 注入合成 pointerdown / 合成拖拽（坐标链与跟手验证）",
     "  WHALE_PET_AUTOTEST=1..4      → 页面侧受控自测（拖拽甩抛 / 命中区外松手 / 实时探针 / 按键保持）",
+    "  WHALE_PET_DIAG_CHAT=<ms>[:消息] → 打开对话窗（带消息则填入并发送，供端到端验证）",
     "细节见 docs/VERIFICATION.md 与 src-tauri/src/diagnostics.rs。"
   ]
 }
