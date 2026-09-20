@@ -34,8 +34,12 @@ pub const PANEL_W: f64 = 272.0;
 pub const PANEL_H: f64 = 286.0;
 /// 面板四周留给 CSS 阴影的透明边距（窗口比面板大一圈，阴影才有地方画）
 pub const SHADOW_PAD: f64 = 18.0;
-/// "动作点播"展开后的面板高度上限（再高就交给页面内部滚动）
-pub const PICKER_MAX_H: f64 = 520.0;
+/// "动作点播"展开后的面板高度上限（再高就交给页面内部滚动）。
+///
+/// 上限卡的是**最长的那种内容**：动作列表（`.list` 最多 372px）已经占满时，
+/// 底下再冒出一条失败提示（toast 会折成 2~3 行）也要放得下——卡太紧会把提示裁掉，
+/// 那正是用户截图报的"提示文字显示不全"。
+pub const PICKER_MAX_H: f64 = 600.0;
 
 /// 上一次弹出时的锚点（光标位置）：`resize` 要用它重算位置，否则展开动作列表时窗口会跳
 static LAST_ANCHOR: Mutex<Option<Vec2>> = Mutex::new(None);

@@ -342,7 +342,7 @@ match config::ensure_sample_animations(&app_data_dir) {
         }
     }
 
-    // ---- 7d. 托盘菜单样式探针（`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker|:picker-expanded]）----
+    // ---- 7d. 托盘菜单样式探针（`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker|:picker-expanded|toast]）----
     if let Ok(value) = std::env::var("WHALE_PET_DIAG_TRAY_MENU") {
         let (delay_text, mode) = match value.split_once(':') {
             Some((delay, mode)) => (delay, mode),
@@ -352,6 +352,7 @@ match config::ensure_sample_animations(&app_data_dir) {
         let mode: &'static str = match mode {
             "picker" => "picker",
             "picker-expanded" => "picker-expanded",
+            "toast" => "toast",
             _ => "",
         };
         eprintln!("[whale-pet] 启用托盘菜单探针（{delay}ms 后弹出，模式={mode}）");

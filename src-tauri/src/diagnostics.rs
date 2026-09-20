@@ -324,7 +324,7 @@ pub fn spawn_tray_probe(app: tauri::AppHandle, items: Vec<String>) {
     });
 }
 
-/// 排障：`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker|:picker-expanded]` —— 启动后按固定延时**弹出托盘菜单**。
+/// 排障：`WHALE_PET_DIAG_TRAY_MENU=<毫秒>[:picker|:picker-expanded|toast]` —— 启动后按固定延时**弹出托盘菜单**。
 ///
 /// 用途：托盘菜单的样式只能看（`scripts/capture-window.ps1` 会按标题截图），
 /// 而"点托盘图标"在自动化环境里注不进去（见 `spawn_tray_probe` 的说明）。
@@ -333,6 +333,8 @@ pub fn spawn_tray_probe(app: tauri::AppHandle, items: Vec<String>) {
 ///
 ///   - `:picker`          再点一下「动作点播」（验证展开后的分类折叠态）
 ///   - `:picker-expanded` 再展开第一个分类（验证点击展开与窗口变高）
+///   - `:toast`           再点一下「查余额」——AI 未开启时它会失败并弹提示，
+///                        用来验证"提示文字有没有被窗口下边缘裁掉"（用户报过这个 bug）
 pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, mode: &'static str) {
     std::thread::spawn(move || {
         // 探针模式下不让"外点关闭"把菜单收掉：本机桌面环境时不时会有零星鼠标按下，
@@ -352,14 +354,31 @@ pub fn spawn_tray_menu_probe(app: tauri::AppHandle, delay_ms: u64, mode: &'stati
             eprintln!("[whale-pet][托盘菜单探针] 找不到托盘菜单窗");
             return;
         };
-        let picker_script = r#"(function () {
+        // `:toast` 点的是会失败的那一项（AI 没开 → 宿主回错 → 页面弹提示），
+        // 其余模式点「动作点播」
+        let (click_script, click_label) = if mode == "toast" {
+            (
+                r#"(function () {
+  var node = document.querySelector('[data-act="balance"]');
+  if (!node) return 'no-item';
+  node.click();
+  return 'clicked';
+})()"#,
+                "查余额",
+            )
+        } else {
+            (
+                r#"(function () {
   var node = document.querySelector('[data-act="picker"]');
   if (!node) return 'no-item';
   node.click();
   return 'clicked';
-})()"#;
-        match window.eval(picker_script) {
-            Ok(()) => eprintln!("[whale-pet][托盘菜单探针] 已点击「动作点播」"),
+})()"#,
+                "动作点播",
+            )
+        };
+        match window.eval(click_script) {
+            Ok(()) => eprintln!("[whale-pet][托盘菜单探针] 已点击「{click_label}」"),
             Err(err) => eprintln!("[whale-pet][托盘菜单探针] 注入点击失败：{err}"),
         }
         if mode != "picker-expanded" {

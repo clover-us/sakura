@@ -324,6 +324,9 @@
         background: var(--accent-soft);
         color: var(--accent);
         font-size: 12px;
+        /* 提示里会带上宿主回的错因（可能是一长串没有空格的英文/URL），
+           允许在任意位置折行，别让它横向撑破 272px 的面板 */
+        overflow-wrap: anywhere;
       }
       .toast[hidden] {
         display: none;

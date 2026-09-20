@@ -6,7 +6,7 @@
 ```powershell
 pnpm tauri dev                                    # 另一个终端
 $env:WHALE_PET_DIAG_SETTINGS = '1'                # 或 nav:physics / nav:animations / nav:system / ownbehaviour
-$env:WHALE_PET_DIAG_TRAY_MENU = '6000:picker'     # 托盘菜单（:picker 展开动作点播）
+$env:WHALE_PET_DIAG_TRAY_MENU = '6000:picker'     # 托盘菜单（:picker 展开动作点播；:toast 弹失败提示）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -TitleLike '设置'
 ```
 
@@ -25,6 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 | `tray-menu.png` | 托盘菜单（浅色）：鲸鱼 logo、显示/隐藏切换项、回到初始位置、动作点播、设置、退出 |
 | `tray-menu-picker.png` | 托盘菜单 · 动作点播：**分类默认全部收起**，右侧显示每个分类的条数 |
 | `tray-menu-picker-expanded.png` | 托盘菜单 · 点开「待机」之后：只展开被点的分类，窗口自动变高 |
+| `tray-menu-toast.png` | 托盘菜单 · **失败提示完整可见**（`:toast` 点「查余额」，AI 未开启 → 两行提示都在面板里）。修的是"提示被窗口下边缘裁掉"（见 VERIFICATION 第 21 节） |
 | `settings-dark.png` | 设置窗口 · **深色**（`?theme=dark` 强制；默认仍跟随系统） |
 | `tray-menu-dark.png` | 托盘菜单 · **深色**（同上） |
 | `icon-candidates.png` | 图标候选（256px 放大 + 64/32/16 真实像素）。前两款是鲸鱼（贴合当前素材），其余**不指向物种**；**用户选定并已采用第 4 款 `d-pet-peek`**（小生物趴在任务栏上），图里它那一列下方有粉色标记线 |

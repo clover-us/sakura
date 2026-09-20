@@ -121,6 +121,7 @@ $env:WHALE_PET_AUTOTEST = '2'; pnpm tauri dev   # "拖到命中区外松手"的�
 $env:WHALE_PET_DIAG_SETTINGS = 'save'           # 1 | save | autostart | addpet | delpet | ownbehaviour | nav:physics
 # 托盘菜单：弹出真实菜单窗（截图用），或按序走一遍动作层
 $env:WHALE_PET_DIAG_TRAY_MENU = '5000:picker'   # 5 秒后弹出并展开"动作点播"
+$env:WHALE_PET_DIAG_TRAY_MENU = '5000:toast'    # 或点一下「查余额」，弹出失败提示（验证提示有没有被窗口裁掉）
 $env:WHALE_PET_DIAG_TRAY = 'toggle,home,anim:待机呼吸休闲,settings'
 $env:WHALE_PET_DIAG_CURSOR = '1'                # 逐帧对照"宿主采样坐标"与"页面 DOM 坐标"
 pnpm tauri dev

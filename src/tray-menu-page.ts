@@ -133,32 +133,53 @@ const expandedGroups = new Set<string>();
 let view: 'menu' | 'picker' = 'menu';
 let toastTimer: number | null = null;
 
+/** toast 停留时长；到点要连窗口一起缩回去，所以单独提出来（见 `setToast`） */
+const TOAST_MS = 1600;
+
 function panel(): HTMLElement {
   const node = document.getElementById('panel');
   if (!node) throw new Error('托盘菜单缺少 #panel');
   return node;
 }
 
+/**
+ * 尺寸调整**串行**执行：`resize_tray_menu` 会按锚点重排整个窗口，
+ * 两次调用交错时会互相覆盖（后量到的高度可能被先发出的那次调用盖回去）。
+ * toast 出现时最容易撞上——它紧跟在"渲染完量一次"之后。
+ */
+let fitQueue: Promise<void> = Promise.resolve();
+
 /** 把窗口高度调成"内容刚好放得下"（宿主会按记住的锚点重算位置） */
-async function fitWindow(): Promise<void> {
-  const element = panel();
-  const height = Math.ceil(element.getBoundingClientRect().height);
-  try {
+function fitWindow(): Promise<void> {
+  const measured = fitQueue.then(async () => {
+    const height = Math.ceil(panel().getBoundingClientRect().height);
     await invoke<void>('resize_tray_menu', { width: PANEL_W, height });
-  } catch (err) {
+  });
+  fitQueue = measured.catch((err) => {
     petLogError('托盘菜单: 调整窗口尺寸失败', err);
-  }
+  });
+  return fitQueue;
 }
 
+/**
+ * 弹一条提示（动作失败的原因、或"还没有宠物"）。
+ *
+ * **必须重新量一次窗口高度**：窗口是弹出那一刻按内容量好的，而 toast 是**事后**
+ * 才长出来的一行（失败提示还会折成两行）——不重量它就会顶出窗口下边缘，
+ * 被窗口裁掉一半（用户截图原话："下面的提示文字显示不全"）。
+ * 收起时再量一次缩回去：否则墙上留一片看不见的空白，把桌面的点击吃掉。
+ */
 function setToast(message: string): void {
   const node = document.getElementById('toast');
   if (!node) return;
   node.textContent = message;
   node.hidden = false;
+  void fitWindow();
   if (toastTimer !== null) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => {
     node.hidden = true;
-  }, 1600);
+    void fitWindow();
+  }, TOAST_MS);
 }
 
 async function act(action: string, options: { label?: string; anim?: string; close?: boolean } = {}): Promise<void> {

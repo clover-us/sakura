@@ -1686,7 +1686,7 @@ scripts/capture-window.ps1 -TitleLike '托盘菜单'
 | 工具 | 用途 |
 | --- | --- |
 | `scripts/capture-window.ps1` | 按窗口标题抓**屏幕合成截图**（WebView2 内容 `PrintWindow` 抓不到、返回全黑；`CopyFromScreen` 抓的是 DWM 实拍）。先提窗口到前台再抓，因此**别拿它当"窗口是否被遮挡"的证据** |
-| `WHALE_PET_DIAG_TRAY_MENU=<ms>[:picker]` | 按延时弹出托盘菜单（走真实 `tray_menu::show()`），供截图；`:picker` 再展开动作点播 |
+| `WHALE_PET_DIAG_TRAY_MENU=<ms>[:picker]` | 按延时弹出托盘菜单（走真实 `tray_menu::show()`），供截图；`:picker` 再展开动作点播（`:toast` 见 21.3） |
 | `WHALE_PET_DIAG_TRAY=<动作>[,…]` | 按序走托盘菜单动作层（`toggle` / `home` / `anim:<名>` / `settings`） |
 | `WHALE_PET_DIAG_SETTINGS=…` | 扩充了 `ownbehaviour` 与 `nav:<页>`（逐页截图用） |
 
@@ -2814,4 +2814,84 @@ src-tauri\target\debug\whale-pet-desktop.exe
 
 > 同一时刻**只能有一个实例**（`single-instance` 插件按标识符加锁）：先退出旧的那个，
 > 再起新的，否则第二次启动只会把旧实例的宠物显示出来（这条在 20.1 的回归里尤其要注意）。
+
+# 21. 托盘菜单的失败提示被窗口裁掉（2026-09-21，用户实测）
+
+**用户截图 + 原话**：点「查余额」（AI 未开启）后，菜单底部那条粉色提示只剩半行——
+`动作失败：AI 功能还没开启（设置 →` 之后就没字了，第二行整个看不见。用户原话："下面的提示文字显示不全"。
+
+## 21.1 根因：窗口高度是**弹出那一刻**量好的，而提示是事后长出来的
+
+托盘菜单窗的尺寸不是固定的：页面渲染完量一次自己的高度，调 `resize_tray_menu` 报给宿主
+（宿主用记住的锚点重算位置）。而失败提示（toast）**不在那次渲染的高度里**——
+它要等用户点了菜单项、宿主回了错之后才 `hidden=false`：
+
+```text
+弹出时    页面量高 → resize_tray_menu(272×333) → 窗口 308×369   ← toast 还是 hidden，不占位置
+点「查余额」→ 宿主回错 → setToast() → 面板长到 393
+                                    ↑ 窗口还是 369：多出来的 60px 顶出窗口下边缘，被裁掉
+```
+
+截图里正好对得上：提示在 272px 宽的面板里折成两行（`…（设置 →` / `AI）`），
+**第一行末尾和整个第二行**都落在窗口之外。顺带记一笔：`.toast` 只是普通流式元素，
+折行本来就是正常行为——问题从来不是"文字太长"，而是"窗口没跟着长"。
+
+## 21.2 修法
+
+| 改动 | 位置 | 为什么 |
+| --- | --- | --- |
+| toast 显示 / 收起后**重新量一次高度** | `src/tray-menu-page.ts::setToast` → `fitWindow()` | "内容长了"的那一方要主动把新尺寸报上去；收起后再量一次缩回去，否则留下一片看不见的空白把桌面的点击吃掉 |
+| 两次 resize **串行**执行 | 同文件 `fitWindow` 的 `fitQueue` | toast 紧跟在"渲染完量一次"之后，两次 `resize_tray_menu` 交错时会互相覆盖，后量到的高度可能被先发出的那次盖回去 |
+| 面板高度上限 520 → 600 | `src-tauri/src/tray_menu.rs::PICKER_MAX_H` | "动作点播"列表占满时（`.list` 最多 372px）底下再冒出一条提示也要放得下；上限卡太紧，等于换个姿势把提示裁掉 |
+| 提示允许在任意位置折行 | `tray-menu.html` 的 `.toast{overflow-wrap:anywhere}` | 错因里可能是一长串没有空格的英文/URL，别让它横向撑破面板 |
+
+## 21.3 证据（真机截图 + 探针）
+
+先给探针补一个模式：`WHALE_PET_DIAG_TRAY_MENU=<毫秒>:toast`——弹出菜单后再点一下「查余额」
+（AI 未开启 → 宿主回错 → 页面弹提示），专门验这条路径（`lib.rs` 的模式白名单 + `diagnostics.rs`）。
+
+```powershell
+pnpm dev                                              # 另一终端：debug 产物走 devUrl，必须有 dev server
+$env:WHALE_PET_DIAG_TRAY_MENU = '12000:toast'
+src-tauri\target\debug\whale-pet-desktop.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -TitleLike '托盘菜单'
+```
+
+四张连拍（每张约 0.75s）把"长出提示 → 收起缩回"整段都拍下来了：
+
+```text
+308×369   菜单本体（提示尚未出现）              面板 333
+308×429   提示两行**完整可见**                 面板 393 ＝ 333 + toast 的 60px
+308×429   同上
+308×369   提示 1.6s 后收起，窗口缩回原高        面板 333
+```
+
+存档：[`screenshots/tray-menu-toast.png`](screenshots/README.md)——第二行 `AI）` 也在面板里。
+
+**回归**（改的是 `fitWindow`，得确认"动作点播"没被串行化弄坏）：
+`WHALE_PET_DIAG_TRAY_MENU=9000:picker-expanded` 连拍，窗口 308×338（分类全收起，面板 302）
+→ 308×374（点开第一个分类，面板 338），按内容变高仍然有效。
+
+## 21.4 本轮已验证 / 未验证
+
+| 项 | 状态 |
+| --- | --- |
+| `pnpm run typecheck` | 已跑：退出码 0 |
+| `cargo build`（debug，含新探针模式） | 已跑：0 error（`Finished dev profile`） |
+| **提示完整可见** | **已截图**（21.3） |
+| 「动作点播」按内容变高（回归） | 已截图对照（21.3） |
+| 装到 `D:\software\whale-pet` | **未做**：本轮只重建了仓库里的产物；用户原先在跑的安装版已重新拉起（旧代码，看不出这次修复） |
+
+## 21.5 怎么看到这次修复
+
+```powershell
+cd D:\programs\deepseek\sakura
+pnpm tauri dev
+```
+
+> 实测记一笔：`cargo build` 出的 **debug** 产物走 `devUrl`（`cfg!(dev)`），
+> 单独启动、没有 vite 时，每个窗口都是 WebView2 的"127.0.0.1 拒绝连接"错误页
+>（20.5 里"debug 产物已内含 dist，直接可看"那句对本轮不成立——要么带上 dev server，
+> 要么用 `tauri build`／带 `--features custom-protocol` 出正式产物，见 19 节①）。
+
 
