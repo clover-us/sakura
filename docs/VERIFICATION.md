@@ -2992,6 +2992,7 @@ icons/128x128@2x.png vs 用户的 256px → 通道差异像素 = 0，最大通�
 | 三处 logo（浅色 + 深色） | 已截图（22.4 ③） |
 | **托盘通知区里的实际观感** | **未验证**：通知区截图抓不到（Win11 还会把它收进"隐藏的图标"浮出层，见 10.7），只核到"喂给 `TrayIconBuilder` 的 RGBA 就是原图"这一层 |
 | 安装目录 `D:\software\whale-pet` | **已替换**（22.7）：用新图标重新出 release exe 覆盖，旧 exe 备份成 `whale-pet-desktop.exe.old-whale-icon`；`uninstall.exe` 与 `logic-smoke.exe` 仍是旧的（不影响桌面图标） |
+| 安装包（NSIS / MSI） | **已重新出包**（22.8）：图标已核对为新图标；**未实跑安装器** |
 
 ## 22.7 桌面图标为什么一开始没变，后来怎么变的
 
@@ -3028,6 +3029,42 @@ C:\Users\admin\Desktop\whale-pet.lnk         → 16×16 原子图标（小图标
 > 以及注册表里的卸载信息仍是 v0.1.0 那一套。要彻底一致得重新出安装包再装一次
 > （`tauri.cmd build --target x86_64-pc-windows-gnu`，产物见 DEVELOPMENT §三）——
 > 本轮没做，因为用户的问题是"桌面图标没换"，换 exe + 刷缓存就够了。
+
+## 22.8 安装包重新出过一遍（含新图标）
+
+**用户随后问**："现在的安装包在哪，打包命令是什么"。磁盘上原有两套，**都在换图标之前**：
+
+| 原有产物 | 时间 | 问题 |
+| --- | --- | --- |
+| `target\release\bundle\**`（msvc） | 09-20 23:04 | 走的不是 gnu，NSIS 那份**少了 `WebView2Loader.dll`**（DEVELOPMENT §三 坑 1）——已随清理删掉 |
+| `target\x86_64-pc-windows-gnu\release\bundle\**` | 09-21 00:57 | 路径对，但**旧图标 + 没有托盘提示那条修复** |
+
+于是重新出了一遍（命令就是 DEVELOPMENT §三里那条）：
+
+```powershell
+# 已激活环境的会话里
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build --target x86_64-pc-windows-gnu
+```
+
+| 产物 | 大小 | 路径 |
+| --- | --- | --- |
+| **NSIS 安装器（推荐）** | 62.3 MB | `src-tauri\target\x86_64-pc-windows-gnu\release\bundle\nsis\whale-pet_0.1.0_x64-setup.exe` |
+| MSI | 63.6 MB | `src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\whale-pet_0.1.0_x64_zh-CN.msi` |
+| 免安装 exe | 6.9 MB | `src-tauri\target\x86_64-pc-windows-gnu\release\whale-pet-desktop.exe` |
+
+**验证**：从 `setup.exe` 里 `ExtractAssociatedIcon` 提取到的就是**原子图标**
+（它取自 `bundle.windows.nsis.installerIcon = icons/icon.ico`）；`WebView2Loader.dll`
+就在 `...\release\` 下——正是 NSIS 打包器取它的位置。
+
+**未验证**：没有真的跑一遍安装器（会覆盖用户现在这份能用的安装），也没有列出安装包内的
+文件清单（NSIS 走 LZMA，字符串搜不到 `whale-pet-desktop.exe`；本机没有 7z）。
+
+## 22.9 顺带清了一次工作区
+
+`src-tauri\target\` 攒下了 180 个排查残留（82 `.log` / 64 `.png` / 19 `.ps1` …）+
+`debug\incremental` 5.7 GB + 没人用的 msvc `target\release` 3.3 GB。清完 **23.6 GB → 14.6 GB**，
+D 盘可用 209.6 → 216.3 GB。保留的是真正有用的缓存：`target\debug\deps`（依赖编译产物）与
+`target\x86_64-pc-windows-gnu`（出包缓存）。清法与取舍写进了 DEVELOPMENT §五。
 
 ## 22.6 怎么看到这次修复
 

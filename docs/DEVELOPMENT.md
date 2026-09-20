@@ -66,6 +66,10 @@ pwsh -File scripts\import-animations.ps1 -Stage
 > 只装了 msvc 目标，直接跑会报 `Target x86_64-pc-windows-gnu is not installed`
 > （实测：2026-09-21 换图标后重新出包时撞过一次，`rustup target list --installed` 只有
 > `x86_64-pc-windows-msvc`；gnu 那套在便携工具链 `D:\tools\Tauri\rustup` 里）。
+>
+> 出包时 Tauri 会**在原地给那个 release exe 打上"bundle 类型"标记**（nsis / msi 各打一次），
+> 所以 `--no-bundle` 出的 exe 与打完包的 exe 不是逐字节相同；直接拷出去跑都一样能用，
+> 只是它记得自己"是某个安装包的一部分"。
 
 **素材怎么进安装包**：`tauri.conf.json` 的 `bundle.resources` 把 `assets/{webm,memes,pic,fonts}`
 映射进资源目录；首次启动由 `src-tauri/src/assets_seed.rs` **只补缺失地**释放到数据目录
@@ -151,6 +155,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 
 > `.ps1` 里有中文的脚本必须存成 **UTF-8 with BOM**（PowerShell 5.1 按 ANSI 读无 BOM 的 UTF-8，
 > 中文注释会把引号吞掉并报 `TerminatorExpectedAtEndOfString`）。
+
+**排查残留会攒得很快**：截图、日志、一次性脚本默认都丢在 `src-tauri\target\`（那里被 gitignore，
+所以 `git status` 一直是干净的，看着不脏但占地方）。2026-09-21 清了一次：顶层攒了 **180 个**
+散落文件（82 个 `.log`、64 个 `.png`、19 个 `.ps1`…），另有 `debug\incremental` **5.7 GB** 与
+一个没人用的 msvc `target\release`（3.3 GB，正式出包走 gnu）。清法：
+
+```powershell
+# ① 只清排查残留：保留构建缓存与 cargo 的元数据
+Get-ChildItem src-tauri\target | Where-Object {
+  $_.Name -notin @('debug', 'x86_64-pc-windows-gnu', 'CACHEDIR.TAG', '.rustc_info.json')
+} | Remove-Item -Recurse -Force
+
+# ② 增量编译缓存（纯缓存，删了下次构建慢一点）
+Remove-Item src-tauri\target\debug\incremental -Recurse -Force
+
+# ③ msvc 的 release 缓存（本项目的出包走 gnu，见 §三）
+Remove-Item src-tauri\target\release -Recurse -Force
+```
+
+> `target\debug\deps`（10.8 GB）是**依赖编译产物**，删了下次 `pnpm tauri dev` 要全量重编
+> （十分钟量级），想省这 10 GB 再删。
 
 ## 六、配置
 
