@@ -202,7 +202,7 @@ fn unprotect(blob: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// 非 Windows：暂时不做加密存储（本项目当前只支持 Windows，见 README 的"仅 Windows"）
+/// 非 Windows：暂时不做加密存储（本项目当前只支持 Windows，见 `docs/DEVELOPMENT.md` 的"仅 Windows"）
 #[cfg(not(windows))]
 fn protect(_plain: &[u8]) -> Result<Vec<u8>, String> {
     Err("当前平台未实现密钥加密存储（本项目目前只支持 Windows）".to_string())

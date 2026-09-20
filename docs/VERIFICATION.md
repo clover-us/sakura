@@ -253,7 +253,7 @@ set WHALE_PET_AUTOTEST=1 && pnpm tauri dev
 
 **结论**：宠物在屏幕上的实际像素尺寸与配置严格相等，缩放链路没有隐藏系数。
 若将来在 125%/150% 缩放的屏幕上 DPR 不为 1，这条日志会立刻暴露（届时需要重定标
-`coords.ts` 的换算收口，见 README 设计要点第 5 条）。
+`coords.ts` 的换算收口，见 `DEVELOPMENT.md` 设计要点第 5 条）。
 
 ---
 
