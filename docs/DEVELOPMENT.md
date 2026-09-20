@@ -62,6 +62,11 @@ pwsh -File scripts\import-animations.ps1 -Stage
 #   src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\whale-pet_0.1.0_x64_zh-CN.msi    63.6 MB
 ```
 
+> 第 ② 步必须在**已激活环境**的会话里跑（见 §一）。系统里那个 `cargo`（`C:\Users\admin\.cargo`）
+> 只装了 msvc 目标，直接跑会报 `Target x86_64-pc-windows-gnu is not installed`
+> （实测：2026-09-21 换图标后重新出包时撞过一次，`rustup target list --installed` 只有
+> `x86_64-pc-windows-msvc`；gnu 那套在便携工具链 `D:\tools\Tauri\rustup` 里）。
+
 **素材怎么进安装包**：`tauri.conf.json` 的 `bundle.resources` 把 `assets/{webm,memes,pic,fonts}`
 映射进资源目录；首次启动由 `src-tauri/src/assets_seed.rs` **只补缺失地**释放到数据目录
 （同名文件已存在就跳过——用户改过/删掉的素材不会被覆盖或复生）。

@@ -2991,7 +2991,43 @@ icons/128x128@2x.png vs 用户的 256px → 通道差异像素 = 0，最大通�
 | exe 图标 | 已从二进制提取核对（22.4 ②） |
 | 三处 logo（浅色 + 深色） | 已截图（22.4 ③） |
 | **托盘通知区里的实际观感** | **未验证**：通知区截图抓不到（Win11 还会把它收进"隐藏的图标"浮出层，见 10.7），只核到"喂给 `TrayIconBuilder` 的 RGBA 就是原图"这一层 |
-| 安装目录 `D:\software\whale-pet` | **未替换**：跑的还是旧图标；要生效需重装或替换 exe |
+| 安装目录 `D:\software\whale-pet` | **已替换**（22.7）：用新图标重新出 release exe 覆盖，旧 exe 备份成 `whale-pet-desktop.exe.old-whale-icon`；`uninstall.exe` 与 `logic-smoke.exe` 仍是旧的（不影响桌面图标） |
+
+## 22.7 桌面图标为什么一开始没变，后来怎么变的
+
+用户看完截图后问"桌面的应用图标怎么没换"——因为桌面快捷方式指向的是**安装目录里的 exe**
+（`D:\software\whale-pet\whale-pet-desktop.exe`，NSIS 装的 v0.1.0），而前一轮只重建了仓库里的产物。
+补的做法（**没有重装安装包**，只换 exe）：
+
+```powershell
+# ① 在已激活的便携工具链里重新出包（系统 cargo 只有 msvc 目标，见 DEVELOPMENT §三 的注）
+powershell -ExecutionPolicy Bypass -File scripts\activate-env.ps1   # 或 D:\tools\Tauri\TauriShell.cmd
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build --target x86_64-pc-windows-gnu --no-bundle
+
+# ② 退出正在跑的桌宠（exe 被占用就换不了），备份后覆盖
+Copy-Item ...\release\whale-pet-desktop.exe D:\software\whale-pet\whale-pet-desktop.exe
+
+# ③ 让 shell 忘掉旧图标
+SHChangeNotify(SHCNE_ASSOCCHANGED) + ie4uinit.exe -show
+```
+
+**这一步为什么必须做**：桌面与开始菜单的快捷方式都是 `IconLocation=,0`（= 用目标 exe 的图标，
+索引 0），所以换 exe 就等于换快捷方式图标——但 Explorer 会把图标缓存在
+`%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*.db` 里，光换文件有可能还显示旧图，
+得通知 shell 一下（`SHChangeNotify` + `ie4uinit -show`）。
+
+**证据：直接问 shell"你现在会画哪个图标"**（`SHGetFileInfo` 拿到的就是桌面画出来的那个）：
+
+```text
+D:\software\whale-pet\whale-pet-desktop.exe  → 32×32 原子图标
+C:\Users\admin\Desktop\whale-pet.lnk         → 32×32 原子图标（大图标视图）
+C:\Users\admin\Desktop\whale-pet.lnk         → 16×16 原子图标（小图标视图）
+```
+
+> 覆盖安装目录**绕过了 NSIS**：`uninstall.exe`（卸载器自己的图标）、`logic-smoke.exe`
+> 以及注册表里的卸载信息仍是 v0.1.0 那一套。要彻底一致得重新出安装包再装一次
+> （`tauri.cmd build --target x86_64-pc-windows-gnu`，产物见 DEVELOPMENT §三）——
+> 本轮没做，因为用户的问题是"桌面图标没换"，换 exe + 刷缓存就够了。
 
 ## 22.6 怎么看到这次修复
 
