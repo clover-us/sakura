@@ -53,6 +53,29 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 ureq = { version = "3", default-features = false, features = ["json", "native-tls"] }
 
+# ============================================================================
+# features：**这一段不能少**（2026-09-20 补回，是一次真实踩坑）
+# ----------------------------------------------------------------------------
+# tauri 的 build.rs 是这样判定"这次是不是发行构建"的：
+#
+#     let custom_protocol = has_feature("custom-protocol");
+#     let dev = !custom_protocol;
+#     alias("dev", dev);                 // → cfg(dev)
+#
+# 也就是说：**没有 `custom-protocol` 这个 feature，`cfg(dev)` 就一直是开的**。
+# 后果：页面 URL 变成 `http://127.0.0.1:1420`，应用会去连一个**并不存在**的开发服务器
+# （实测：本机在 1420 上临时起 HTTP 探针，抓到了 `GET /index.html?label=…` 一串请求）。
+# 前端产物本身仍然是嵌进二进制的（那是 tauri-codegen 嵌的，与本 feature 无关），
+# 所以症状不是白屏，而是"启动时对着空气发一堆请求"。
+#
+# 官方模板一直有这一段，本项目 M0 手写 Cargo.toml 时漏了；`tauri build` 会自己打开
+# 这个 feature（所以安装包不受影响），中招的是本地最常用的直接 `cargo build --release`。
+# 详情与证据见 docs/VERIFICATION.md 第 19 节。
+# ============================================================================
+[features]
+# 由 `tauri build` / CI 打开：关掉 dev 语义，页面从内嵌资源加载
+custom-protocol = ["tauri/custom-protocol"]
+
 # 发行构建的体积/性能取向（对齐 Tauri 官方 size 指南）
 [profile.release]
 codegen-units = 1

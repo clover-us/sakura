@@ -2573,3 +2573,81 @@ NSIS 用 Unicode（UTF-16），没这个问题；WiX/MSI 默认用 Windows-1252�
 | 根因判定（18.2） | **已验证**（截图逐像素 + 上述 crates 的源码路径 + 全仓只有一处运行期样式注入） |
 | 修法生效（安装版右键出白底面板） | **未验证**：需要重新出包 → 实装 → 右键确认。开发模式本来就没问题，**不能当证据** |
 | 其它运行期注入样式/样式属性的场景 | 当前**不存在**（18.2③）；日后新增时不必再为此改配置 |
+
+---
+
+# 19. 从归档分支捞回三样（2026-09-20）
+
+`main` 上曾经并行存在一条针对**同一个菜单症状**的工作线（9 条提交），它的结论是
+"透明窗逐像素 alpha 在这台机器上失效"，修法是把菜单窗铺成不透明白底。18 节把根因定位到
+`style-src` 的 nonce 之后，那条线整体放弃、原样存进本地分支 `archive/menu-alpha-zorder`；
+其中**三样与"alpha 结论"无关**的东西捞了回来，记在这里。
+
+## 19.1 `custom-protocol` feature（真 bug，与菜单无关）
+
+`src-tauri/Cargo.toml` 补回官方模板那一段：
+
+```toml
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+```
+
+**为什么必须补**：tauri 的 `build.rs` 用 `has_feature("custom-protocol")` 决定 `cfg(dev)`：
+
+```rust
+let custom_protocol = has_feature("custom-protocol");
+let dev = !custom_protocol;
+alias("dev", dev);                       // → cfg(dev)
+```
+
+本项目 M0 手写 `Cargo.toml` 时漏了 `[features]` 段，于是 `cfg(dev)` **恒为真**。
+
+**后果**（归档分支的实测证据）：页面 URL 变成 `http://127.0.0.1:1420`，应用去连一个
+**并不存在**的开发服务器。当时在 1420 上临时起了 HTTP 探针，抓到一串请求：
+
+```text
+GET /index.html?label=pet-main-0    GET /bubble.html    GET /menu.html?label=pet-main-0
+GET /tray-menu.html                 GET /chat.html?label=pet-main-0
+```
+
+前端产物本身仍是**嵌进二进制**的（那是 tauri-codegen 干的，与本 feature 无关），
+所以症状不是白屏，而是"启动时对着空气发一堆请求"。
+
+**范围**：`tauri build` 会自己打开这个 feature（所以安装包不受影响）；中招的是本地最常用的
+直接 `cargo build --release`——它出的二进制**看起来**是发行版，实际按 dev 语义在跑。
+
+**验证状态**：本次是**逐字节照搬**归档分支里的这一段（含注释），证据随之沿用；
+`cargo build --release` 的行为本轮**没有重跑**。
+
+## 19.2 两个窗口级诊断脚本
+
+| 脚本 | 用途 | 依赖 |
+| --- | --- | --- |
+| `scripts/diagnose-menu-zorder.ps1` | 一次快照：枚举本进程全部顶层窗口（Z 序 / 尺寸 / 位置 / 扩展样式位 `TOPMOST`、`LAYERED`、`TRANSPARENT`、`NOACTIVATE`），并给"菜单窗是否在宠物窗之上"下结论；顺带打印进程路径与文件时间、显示器 DPI、显卡、系统 | 纯 Win32（`user32`/`shcore`），不读日志、不依赖任何探针 |
+| `scripts/watch-menu-zorder.ps1` | 连续采样同一批窗口的 Z 序，**只在快照变化时**打印一行——用来抓"右键那一下谁被抬起来了" | 同上；`-Seconds` / `-IntervalMs` 可调 |
+
+两者都**只靠窗口尺寸认人**（`780x520` = 菜单窗、`420x236` = 宠物窗），所以改了菜单窗尺寸或
+宠物尺寸后要同步脚本里的判断（认不出来也不影响——整张表照样打出来）。
+
+> 为什么值得留：这套"按真实分辨率枚举顶层窗口 + 比 Z 序/扩展样式"与 `capture-window.ps1`
+> （屏幕合成截图）互补——截图看不出"谁压在谁上面"，这两个脚本不看画面只看窗口。
+> 另外它们对"截错区域"这类事故免疫：分辨率和窗口矩形都是当场枚举出来的。
+
+## 19.3 面板描边：落在 `src/` 而不是共享层
+
+共享 `MENU_CSS` 给面板的投影是 `0 8px 28px rgba(0,0,0,.2)`；归档分支为"浅色底上也能看出面板边界"
+加了一圈 `0 0 0 1px rgba(0,0,0,.05)` 的贴边描边。
+
+捞回时**没有**改 `reference/shared/menu.ts`，而是加在 `src/menu-page.ts` 的 `MENU_CSS_OVERRIDE`，
+注入时追加在 `MENU_CSS` 之后（同优先级后者生效）。原因是 `docs/COPY-MANIFEST.md` 的纪律：
+`reference/shared/**` 与上游**逐字节一致**，需要适配就写在本仓库这一层——与"拖拽弹簧 K/C
+只在 `src/renderer/drag.ts` 里偏离"是同一种做法。这处偏离已登记进 COPY-MANIFEST 第三节。
+
+## 19.4 待验证（诚实记录）
+
+| 项 | 状态 |
+| --- | --- |
+| TS 改动 | 已跑 `tsc --noEmit`（等价 `pnpm run typecheck`）：退出码 0 |
+| `custom-protocol` 是否真的生效 | **未重跑**：验证方法是 `cargo build --release --features custom-protocol`，然后看页面 URL 是否变成内嵌资源（不再是 `http://127.0.0.1:1420`） |
+| 两个脚本 | **未重跑**（纯只读窗口枚举；跑法见脚本头部 `param`） |
+| 描边观感 | **未截图对比**：这层线是 5% 黑，正常观感下几乎看不出来；真要判断得在生产版菜单上用 `capture-window.ps1` 前后各抓一张 |

@@ -67,6 +67,7 @@
 | 每宠一个局部小窗（避免 DWM 黑屏） | `pet_window.rs::create_one` | **结论继承**：上游实测全屏透明窗会黑屏，直接采用小窗方案 |
 | 「配置是唯一真相，失败大声报错」 | `config.rs` + `renderer/dom.ts::showFatalError` | **约定继承** |
 | 跟手弹簧 `springStep`（K=200 / C=30，ζ≈1.06） | `src/renderer/drag.ts` 的 `DRAG_FOLLOW_K/C`（K=600，C=2√K） | **有意偏离（唯一一处物理常量）**：公式一字不差照抄，只改 K/C 的比例——上游 `v·C/K = 0.15s` 的随动滞后在快速拖动时"太飘"（用户实测），改成 `0.082s`（滞后降到 55%），阻尼仍按临界配置不 overshoot。`reference/shared/physics.ts` 保持**逐字节零改动**；这颗旋钮在 `drag.ts` 里是单个常量 |
+| 面板描边（共享 `MENU_CSS` 里 `.dsh-pet-menu-column` 的 `box-shadow`） | `src/menu-page.ts` 的 `MENU_CSS_OVERRIDE` | **有意偏离（外观微调）**：共享样式只给了 `0 8px 28px` 的投影，面板压在浅色壁纸/白底上时边界不够利落，桌面端追加一圈 `0 0 0 1px rgba(0,0,0,.05)` 的贴边描边。做法是"注入时把覆盖串追加在 `MENU_CSS` 之后"（同优先级后者生效），所以 `reference/shared/menu.ts` 仍是**逐字节零改动**；上游浏览器端不受影响 |
 
 ## 四、如何从上游取更新
 

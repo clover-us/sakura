@@ -62,6 +62,20 @@ declare global {
   }
 }
 
+/**
+ * 桌面端对共享样式的**唯一一处覆盖**：给级联面板再勾一圈 5% 黑的贴边描边。
+ *
+ * 为什么需要：共享的 `MENU_CSS` 只给了面板 `0 8px 28px` 的投影，压在浅色壁纸/白底上时
+ * 边界不够利落（用户实测反馈"面板像一片没有边界的白"）。这层描边极淡，正常观感下几乎看不见。
+ *
+ * 为什么不直接改共享文件：`docs/COPY-MANIFEST.md` 的纪律是
+ * `reference/shared/**` 与上游**逐字节一致**，需要适配就写在本仓库这一层
+ * （与"拖拽弹簧 K/C 只在 `src/renderer/drag.ts` 里偏离"同一个做法）。
+ * 追加在 `MENU_CSS` 之后 → 同优先级下后者生效，效果与直接改共享层等价。
+ */
+const MENU_CSS_OVERRIDE =
+  '.dsh-pet-menu-column{box-shadow:0 0 0 1px rgba(0,0,0,.05),0 8px 28px rgba(0,0,0,.2)}';
+
 /** 本窗口承载的宠物标签（由建窗时的 URL 给出） */
 let petLabel = '';
 /** 已挂载的菜单实例 */
@@ -129,7 +143,7 @@ function showMenu(insetX: number, insetY: number): void {
 
   if (!cssInjected) {
     const style = document.createElement('style');
-    style.textContent = MENU_CSS;
+    style.textContent = MENU_CSS + MENU_CSS_OVERRIDE;
     document.head.appendChild(style);
     cssInjected = true;
   }
