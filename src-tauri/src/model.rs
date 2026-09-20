@@ -174,6 +174,12 @@ pub struct PetRuntimeDto {
     /// 窗口就一直保持可交互（包围盒里的透明区域一直吃点击）。
     /// 前端在启动时用这个字段对齐一次，两边就不会各说各话。
     pub interactive: bool,
+    /// 对话输入条是否正在占用鼠标（闸门尚未到期）：见 [`PetWindowState::chat_blocked`]。
+    ///
+    /// 前端据此**整段跳过命中判定**——只在"窗口吃不吃点击"这一步尊重它是不够的：
+    /// 光标采样通道也会起手（`origin='sampler'`），那条路绕过了窗口样式，
+    /// 宠物照样会被拎着走（用户实测：拖动输入条经过宠物身上，宠物跟着一起动）。
+    pub chat_input_held: bool,
 }
 
 /// 尺寸
@@ -232,6 +238,26 @@ pub struct PetWindowState {
     pub interactive: bool,
     /// 前端是否正在使用鼠标输入（拖拽中）——此期间兜底通道绝不翻回穿透
     pub input_busy: bool,
+    /// **对话输入闸门**：对话输入条正在被拖动时，宠物窗口必须整段让开鼠标。
+    ///
+    /// 为什么需要它（用户实测的 bug）：输入条与宠物是两个**独立置顶小窗**。
+    /// 用户按住握柄把输入条拖到宠物身上时，系统把鼠标消息同时投给下面的宠物窗，
+    /// 而宠物的命中判定只看"光标在不在身体上"——于是宠物把这次拖动当成了
+    /// "抓住我"，**跟着输入条一起走**。
+    ///
+    /// ## 为什么收闸判据在**宿主**（这条是用户复测两次后的结论）
+    ///
+    /// 第一版是"页面收到 mousemove 的 `buttons === 0` 就收闸"，实测**按下 13ms 就被关掉**：
+    /// 系统拖动（`startDragging`）那段模态循环里，页面收到的鼠标事件**按键位不可信**。
+    /// 宿主这里不收任何页面事件的影响——它每 16ms 自己查一次全局按键位
+    /// （`display::primary_button_down()`，与宠物自己那条拖拽看门狗同一个来源，
+    /// 注释里写着"这是唯一不依赖窗口消息的可靠来源"），**看到主键真的松开才收闸**。
+    ///
+    /// 页面这边的职责只剩"**续期**"：拖动期间每 300ms 上报一次 `dragging = true`。
+    /// 于是两边各自只需做自己可靠的那半件事，谁也不依赖"网页事件是否可信"。
+    pub chat_input_dragging: bool,
+    /// 闸门轮次（每开/关一次 +1）：前端"已上报"缓存据此识别闸门换了一轮。
+    pub chat_input_epoch: u64,
 }
 
 impl PetWindowState {
@@ -242,6 +268,7 @@ impl PetWindowState {
             window_size: self.size,
             box_offset: self.box_offset,
             interactive: self.interactive,
+            chat_input_held: self.chat_blocked(),
         }
     }
 
@@ -250,6 +277,27 @@ impl PetWindowState {
         Vec2 {
             x: self.origin.x + self.box_offset.x,
             y: self.origin.y + self.box_offset.y,
+        }
+    }
+
+    /// 闸门是否生效
+    pub fn chat_blocked(&self) -> bool {
+        self.chat_input_dragging
+    }
+
+    /// 放行/续期闸门
+    pub fn hold_chat_input(&mut self) {
+        if !self.chat_input_dragging {
+            self.chat_input_dragging = true;
+            self.chat_input_epoch = self.chat_input_epoch.wrapping_add(1);
+        }
+    }
+
+    /// 收闸（**主键真的松开** / 窗口关闭 / 拖动结束确认后调用）
+    pub fn release_chat_input(&mut self) {
+        if self.chat_input_dragging {
+            self.chat_input_dragging = false;
+            self.chat_input_epoch = self.chat_input_epoch.wrapping_add(1);
         }
     }
 }

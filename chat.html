@@ -80,7 +80,8 @@
       }
       .grip:hover {
         color: var(--accent);
-        background: var(--hover);
+        /* 用 --line（原本这里的 --hover 从来没定义过，等于握柄按下/悬停没有任何反馈） */
+        background: var(--line);
       }
       .grip:active {
         cursor: grabbing;
@@ -115,6 +116,14 @@
         opacity: 0.5;
         cursor: default;
       }
+      /*
+       * 状态行（"正在思考…" / 失败原因 / AI 未开启的提示）。
+       *
+       * 它**必须在窗口可视区之内**：宿主会按"有没有这一行"把窗口加高（54 → 76），
+       * 见 chat_window.rs 的 HEIGHT_WITH_STATUS。这是用户实测踩出来的——
+       * 输入条原本占满了整个 54px 窗口，这行字被 body 的 overflow:hidden 整行裁掉，
+       * 表现就是"点发送毫无反应"（其实失败原因早就写好了，只是没人看得见）。
+       */
       .status {
         margin-top: 4px;
         padding: 0 12px;
@@ -123,6 +132,9 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        /* 上限 10em ≈ 18 个中文字符：与宿主 chat_window::STATUS_MAX_CHARS 对齐，
+           避免提示尾部最关键的「设置 → AI」被省略号吃掉 */
+        max-width: 10em;
       }
       .status.error {
         color: var(--error);

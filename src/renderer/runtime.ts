@@ -159,6 +159,17 @@ export class PetRuntime {
   /** 是否已经记录过"初始窗口位置"日志（同上，只记一次） */
   private loggedWindowState = false;
   /**
+   * **对话输入闸门**（宿主下发，见 `contract.ts::PetRuntime.chatInputHeld`）。
+   *
+   * 对话输入条正在占用鼠标时，本页必须**整段让开**：不做命中判定、不翻可交互、
+   * 更不能用光标采样起手——否则用户拖动输入条经过宠物时，宠物会把这次拖动
+   * 当成"抓住我"跟着一起走（用户实测反馈的 bug）。
+   *
+   * 这里只存"宿主最近一次告诉我的值"：真正的真相在宿主（`chat_input_until` 会到期自愈），
+   * 本页每帧重新读，不做任何自己的计时。
+   */
+  private chatInputHeld = false;
+  /**
    * 自测模式（`?autotest=N`）：开启后**按键位改由自测状态机提供**（`syntheticPrimaryDown`），
    * 光标位置仍来自宿主的真实采样。
    *
@@ -317,6 +328,34 @@ export class PetRuntime {
     if (!cursor) return;
     const primaryDown = this.syntheticInputActive() ? this.syntheticPrimaryDown : this.lastSampledPrimaryDown;
     const local = screenToLocal(cursor, this.boxOrigin);
+
+    // **对话输入闸门**：输入条在占用鼠标时，本窗口整段让开。
+    //
+    // 这里必须"整段跳过"而不是只把命中结果按成 false：`evaluateInput` 除了翻
+    // 可交互之外，还会在 `primaryDown && insideBody && !wasInteractive` 时
+    // **由光标采样起手一次按下**（`origin='sampler'`）。那条路绕过了窗口样式，
+    // 只要放行，宠物就会在用户拖动输入条经过它时被拎起来（用户实测的 bug：
+    // "拖动输入框到人物上时会带动人物一起移动"）。
+    //
+    // 已按下的拖拽仍然交给下面的看门狗收尾（用户在拖宠物的中途去按了输入条，
+    // 松手一样要能正常落地），所以这里 return 的位置在按键位计算之后。
+    if (this.chatInputHeld) {
+      if (this.drag.isPressed) {
+        const now = performance.now();
+        const dogReady =
+          !primaryDown &&
+          this.buttonUpSince > 0 &&
+          this.buttonUpSince < this.pressStartedAt &&
+          this.lastDomPointerAt < this.pressStartedAt &&
+          now - this.lastDomPointerAt >= DOG_SILENCE_MS;
+        if (dogReady) {
+          petLog('松手: 看门狗收尾（对话输入闸门期间，按键与 DOM 均已静默）');
+          this.drag.onPointerUp();
+        }
+      }
+      return;
+    }
+
     // 命中判定：只有身体命中区可交互。
     // （菜单已改成**独立小窗**，不再需要"菜单打开时整窗放行"这个例外。）
     const insideBody = isInsideHitBox(this.hitBox, local.x, local.y);
@@ -560,6 +599,14 @@ export class PetRuntime {
       y: this.windowOrigin.y + state.boxOffset.y,
     };
     this.boxOffset = { ...state.boxOffset };
+    // 对话输入闸门：宿主那边的到期时间是唯一真相，这里只做镜像（见字段注释）
+    const held = state.chatInputHeld === true;
+    if (held !== this.chatInputHeld) {
+      this.chatInputHeld = held;
+      petLog(`对话输入闸门: ${held ? '宠物让开鼠标（输入条正在使用中）' : '已恢复（命中判定重新生效）'}`);
+      // 闸门打开时窗口已被宿主落成穿透；收闸后这一帧的命中判定会自己把它翻回来，
+      // 不需要在这里额外做任何窗口操作。
+    }
     if (!this.loggedWindowState) {
       // 只记首次：证明"Rust 建窗 → 位置下发 → 前端换算包围盒"这条链路通了
       this.loggedWindowState = true;

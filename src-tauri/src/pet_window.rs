@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Emitter, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 use crate::config::{AppConfig, Corner, PetEntry};
 use crate::display;
@@ -168,6 +168,30 @@ impl<R: Runtime> PetRuntime<R> {
     /// （下一步翻转会重新对齐；这也是原来 `apply_interactive` 的行为）。
     pub fn apply_interactive_style(&self, interactive: bool) -> Result<(), String> {
         apply_interactive_style(&self.window, interactive)
+    }
+
+    /// 放行/续期**对话输入闸门**（持锁期调用，只改账本、绝不动窗口）。
+    ///
+    /// 语义见 [`crate::model::PetWindowState::chat_input_dragging`]：
+    /// 闸门生效期间本窗口必须整段让开鼠标，否则用户拖动输入条经过宠物时，
+    /// 宠物会把这次拖动当成"抓住我"跟着一起走（用户实测的 bug）。
+    ///
+    /// 返回值：若宿主此刻"可交互"，返回 `true` 表示**调用方需要把窗口落成穿透**
+    /// （与 [`Self::plan_interactive`] 同一套约定：持锁期只记账，出锁后再落样式）。
+    pub fn hold_chat_input(&mut self) -> bool {
+        self.state.hold_chat_input();
+        // 闸门打开时宠物窗口必须让开：账本与窗口样式由调用方在出锁后落
+        self.plan_interactive(false).is_some()
+    }
+
+    /// 收闸（持锁期调用，只改账本）。
+    ///
+    /// 返回 `true` 表示**闸门确实从开到关**（调用方据此决定要不要广播窗口状态）。
+    /// 收闸只需要"恢复判定权"：窗口要不要吃点击由前端下一帧的命中判定决定。
+    pub fn release_chat_input(&mut self) -> bool {
+        let was = self.state.chat_blocked();
+        self.state.release_chat_input();
+        was
     }
 }
 
@@ -351,6 +375,9 @@ fn create_one<R: Runtime>(
         // 直到用户第一次悬停宠物才恢复（实测踩过的 bug）。
         interactive: true,
         input_busy: false,
+        // 对话输入闸门：初始关闭（没有输入条在占用鼠标）
+        chat_input_dragging: false,
+        chat_input_epoch: 0,
     };
 
     let runtime = PetRuntime {
@@ -537,6 +564,29 @@ pub fn emit_window_state<R: Runtime>(runtime: &PetRuntime<R>) {
     if let Err(err) = sent {
         // 事件发不出去通常意味着 webview 已销毁（窗口正在关闭），只记日志不打断
         eprintln!("[whale-pet] 广播窗口状态失败 {}：{err}", runtime.label());
+    }
+}
+
+/// 按**标签**把窗口状态广播给对应的前端（幂等：不需要 `PetRuntime` 的场景用）。
+///
+/// 存在的理由：有些状态变化发生在"没有 `&mut PetRuntime` 的地方"（例如对话输入闸门
+/// 是由对话窗的页面放行的，命令里只拿得到标签）。这时按标签查一次窗口即可，
+/// 语义与 [`emit_window_state`] 完全一致——前端收到的都是同一份 `PetRuntimeDto`。
+pub fn emit_window_state_by_label<R: Runtime>(app: &AppHandle<R>, pet_label: &str) {
+    let Some(state) = app.try_state::<crate::state::AppState>() else {
+        return;
+    };
+    let dto = {
+        let pets = watchdog::timed_lock(&state.pets, "pets（按标签广播窗口状态）");
+        match pets.get(pet_label) {
+            Some(runtime) => runtime.runtime_dto(),
+            None => return,
+        }
+    };
+    if let Some(window) = app.get_webview_window(pet_label) {
+        if let Err(err) = window.emit(EVENT_WINDOW_STATE, dto) {
+            eprintln!("[whale-pet] 广播窗口状态失败 {pet_label}：{err}");
+        }
     }
 }
 

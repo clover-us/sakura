@@ -119,6 +119,7 @@ pub fn run() {
             commands::set_pet_bounds,
             commands::set_pet_interactive,
             commands::set_pet_input_busy,
+            commands::mark_chat_input,
             commands::report_pet_error,
             commands::pet_debug_log,
             commands::get_displays,
@@ -150,9 +151,11 @@ pub fn run() {
             commands::llm_selftest,
             commands::llm_whisper_now,
             commands::llm_chat,
+            commands::chat_status,
             commands::open_chat,
             commands::balance_query,
             commands::close_chat,
+            commands::resize_chat,
             commands::llm_memory,
             commands::llm_memory_clear,
         ])
@@ -428,9 +431,13 @@ fn spawn_poll_loop(app: AppHandle) {
         while running.load(Ordering::Relaxed) {
             let now = Instant::now();
 
+            // 全局主键状态：本帧**只查一次**，光标采样与下面的闸门看门狗共用同一个值
+            // （两次查询之间可能被用户松开，同源读取才能让两处判断自洽）
+            let primary_down_now = display::primary_button_down();
+
             // ---- 光标采样 ----
             if let Some(position) = display::cursor_position(&app) {
-                let primary_down = display::primary_button_down();
+                let primary_down = primary_down_now;
                 let sample = CursorSample {
                     position: crate::model::Vec2 { x: position.x, y: position.y },
                     at: started_at.elapsed().as_millis() as u64,
@@ -463,6 +470,18 @@ fn spawn_poll_loop(app: AppHandle) {
                     );
                 }
                 prev_primary_down = primary_down;
+            };
+
+            // ---- 对话输入闸门的**收闸看门狗** ----
+            //
+            // 为什么放在这里（用户复测两次后的结论）：页面对"松手"的判断不可信——
+            // 系统拖动（`startDragging`）那段模态循环里，页面收到的鼠标事件按键位是错的
+            // （实测：闸门在按下 13ms 后就被页面的"疑似松手"关掉，宠物随即把这次拖动
+            // 当成了"抓住我"）。而这一路是**全局按键位**（与宠物自己的拖拽看门狗同源，
+            // 见 `CursorSample::primary_down` 的注释），不依赖任何窗口消息。
+            // 于是分工变成：页面负责"我还在摆弄输入条"的续期，宿主负责"主键真的松开了"。
+            if !primary_down_now {
+                release_chat_input_if_button_up(&app);
             }
 
             // ---- 显示器几何 ----
@@ -546,6 +565,42 @@ fn broadcast_cursor(app: &AppHandle, sample: CursorSample) {
 ///   ① 持锁只做"读 + 记账"（`plan_interactive`），**绝不动窗口**；
 ///   ② 出锁之后把"落样式"投递给主线程（`run_on_main_thread`，非阻塞）——
 ///      轮询线程既不持锁做窗口调用，也不会阻塞在任何窗口调用上，死锁环从结构上不成立。
+/// **对话输入闸门的收闸看门狗**：主键已经松开 → 收闸（并让宠物页重新接管命中判定）。
+///
+/// 为什么必须由宿主来做这件事（用户复测两次的结论）：页面在系统拖动
+/// （`startDragging`，走的是 `WM_NCLBUTTONDOWN` 那套模态循环）期间收到的鼠标事件
+/// **按键位不可信**——实测第一版的"页面上收到 `buttons === 0` 就收闸"让闸门在按下
+/// 13ms 后就被自己关掉，紧接着同一次拖动被宠物的采样通道接走，表现为
+/// "拖动输入条，宠物跟着一起走"。
+///
+/// 这一路用的 `display::primary_button_down()` 与宠物自己那条拖拽看门狗是同一个来源
+/// （见 `CursorSample::primary_down` 的注释：它是**唯一不依赖窗口消息**的可靠按键来源），
+/// 因此"什么时候真的松手"交给它判定，页面只负责"我还在摆弄输入条"的续期心跳。
+///
+/// 与 `apply_fallback_hit` 同一条纪律：**持锁期只记账，窗口操作出锁再做**。
+fn release_chat_input_if_button_up(app: &AppHandle) {
+    // ① 持锁期：找出"闸门开着"的宠物并收闸
+    let released: Vec<String> = {
+        let state = app.state::<AppState>();
+        let mut pets = watchdog::timed_lock(&state.pets, "pets（对话输入闸门收闸）");
+        let mut released = Vec::new();
+        for (label, runtime) in pets.iter_mut() {
+            if !runtime.state.chat_blocked() {
+                continue;
+            }
+            if runtime.release_chat_input() {
+                released.push(label.clone());
+            }
+        }
+        released
+    };
+    // ② 出锁期：把"闸门关了"这件事告诉宠物页（它每帧读 `chatInputHeld`）
+    for label in released {
+        eprintln!("[whale-pet] 对话输入闸门：主键已松开，{label} 恢复命中判定");
+        pet_window::emit_window_state_by_label(app, &label);
+    }
+}
+
 fn apply_fallback_hit(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
     // ① 持锁期：判定 + 记账，产出"需要恢复交互"的标签清单
     let planned: Vec<String> = {
@@ -553,6 +608,19 @@ fn apply_fallback_hit(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
         let mut pets = watchdog::timed_lock(&state.pets, "pets（兜底命中判定）");
         let mut planned = Vec::new();
         for (label, runtime) in pets.iter_mut() {
+            // **对话输入闸门**：输入条正在被拖动时，宠物整段让开鼠标。
+            //
+            // 为什么这条判定必须在这里（而不只是"窗口已经是穿透态"就够了）：
+            // 输入条和宠物是两个独立置顶小窗，但鼠标消息会同时投给它们。
+            // 只要宠物的命中区在这里被判成"该恢复可交互"，下面第二段的兜底就会把
+            // 窗口翻回可交互，紧接着宠物页的采样起手（`origin='sampler'`）就把这次
+            // 拖动当成了"抓住宠物"——用户看到的正是"拖动输入框，人物跟着一起走"。
+            //
+            // 判定排在 `interactive` 之前：闸门打开时 `mark_chat_input` 已经把它落成穿透，
+            // 这里的顺序只是让"闸门优先"这件事在代码里也一眼可见。
+            if runtime.state.chat_blocked() {
+                continue;
+            }
             if runtime.state.input_busy || runtime.state.interactive {
                 continue;
             }

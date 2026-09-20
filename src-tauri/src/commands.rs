@@ -155,6 +155,70 @@ pub fn set_pet_input_busy(state: State<'_, AppState>, label: String, busy: bool)
     })
 }
 
+/// **对话输入闸门**：对话窗在拖动/使用输入条时，让宠物窗口整段让开鼠标。
+///
+/// 谁调用：`chat-page.ts`（握柄按下时放行，拖动期间每 300ms 续期一次，收闸由宿主判定）。
+/// 为什么要由页面放行：只有输入条那一侧知道"用户现在正在摆弄我"；宠物侧看到的信息
+/// 永远只是"光标在我身上"，它无法区分"用户在抓宠物"和"用户拖着输入条经过宠物"。
+///
+/// ## 收闸不在这里，而在**宿主的光标轮询线程**
+///
+/// 这是本命令**只做 `blocked = true`** 的原因（用户复测两次后的结论，见
+/// `model::PetWindowState::chat_input_dragging` 的注释）：页面在系统拖动期间收到的
+/// 鼠标事件按键位不可信（实测按下 13ms 后闸门就被自己的"疑似松手"关掉了），
+/// 所以"用户什么时候松手"必须由宿主**每 16ms 查全局按键位**来判定
+/// （`lib.rs::release_chat_input_if_button_up`），页面的续期只是"我还在摆弄它"的心跳。
+///
+/// `blocked = false` 仍然接受：那是页面自己确认松手（正常拖动路径）时的主动收闸，
+/// 与宿主看门狗互为双保险。
+#[tauri::command(rename_all = "camelCase")]
+pub fn mark_chat_input(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    label: String,
+    blocked: bool,
+    #[allow(unused_variables)] dragging: Option<bool>,
+    #[allow(unused_variables)] ttl_ms: Option<u64>,
+) -> Result<(), String> {
+    // 持锁期只做"记账"，产出"要不要让宠物让开" + "状态有没有真的变"两件事
+    // （纪律见 with_pet 的注释）。
+    // `ttlMs` 现在只用于日志：闸门的生命周期改由"页面续期 + 宿主按键看门狗"共同决定，
+    // 保留参数是为了不破坏前端契约（下次要加真正的超时上限时还会用到它）。
+    let (plan_style, changed) = with_pet(&state, &label, |runtime| {
+        if blocked {
+            let was = runtime.state.chat_blocked();
+            Ok((runtime.hold_chat_input(), !was))
+        } else {
+            let was = runtime.release_chat_input();
+            Ok((false, was))
+        }
+    })?;
+    let _ = ttl_ms;
+    let _ = dragging;
+    let _ = ttl_ms;
+    let _ = dragging;
+    // ② 出锁后再动窗口：闸门刚打开时宠物可能正"可交互"，必须立刻让开。
+    //
+    // 注意这里**只动窗口样式、不改前端账本**：前端 `reportedInteractive` 会暂时与
+    // 宿主的实际样式不一致（宿主也是这么想的——它比页面更权威）。不一致会在下一次
+    // 状态翻转时自愈：宠物页每帧都拿命中结果去 `setInteractive`，值一样就发一条去重
+    // IPC，值不一样（收闸后）就自然对齐。这与 `apply_fallback_hit` 里"兜底先翻、
+    // 前端后跟"是同一种可接受的短暂不一致。
+    if plan_style {
+        if let Some(window) = app.get_webview_window(&label) {
+            if let Err(err) = pet_window::apply_interactive_style(&window, false) {
+                eprintln!("[whale-pet] 对话输入闸门：宠物窗口落成穿透失败 {label}：{err}");
+            }
+        }
+    }
+    // ③ 状态**真的变了**才广播：拖动期间页面每 300ms 续期一次，每次都广播等于
+    //    每秒给宠物页多发 3 条 IPC（它每帧都读这个字段，值没变就白跑）。
+    if changed {
+        pet_window::emit_window_state_by_label(&app, &label);
+    }
+    Ok(())
+}
+
 /// 前端请求显示错误信息（页面红条已由前端渲染，这里只负责落到日志）
 #[tauri::command]
 pub fn report_pet_error(label: String, message: String) -> Result<(), String> {
@@ -734,6 +798,31 @@ pub fn llm_status(state: State<'_, AppState>) -> Result<LlmStatusDto, String> {
     Ok(llm_status_of(&state.app_data_dir, &config))
 }
 
+/// **对话窗的首屏自查**：AI 对话现在能不能用？不能用的话给一句给人看的提示。
+///
+/// 为什么单独做一条命令，而不是让对话窗调 `llm_status`：
+///   ① `llm_status` 会顺手算表情包池（要读目录），对"只想知道能不能打字"来说太重；
+///   ② 对话窗要的是**一句提示**，不是一个状态对象——判断逻辑（总开关 / 对话开关 /
+///      要不要 key）留在这里，前端不重复实现一遍（否则两边迟早会不一致）。
+///
+/// 返回 `Some(提示文本)` 表示"现在发不出去，原因是这句"；`None` = 可以正常对话。
+#[tauri::command]
+pub fn chat_status(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let config = state.config_snapshot();
+    if !config.llm.enabled || !config.llm.chat.enabled {
+        return Ok(Some("AI 还没开启：设置 → AI 里打开总开关与「对话」".to_string()));
+    }
+    let needs_key = crate::config::provider_needs_key(config.llm.provider.trim());
+    if needs_key {
+        let store = crate::secret::SecretStore::new(&state.app_data_dir);
+        let has_key = matches!(store.load(), Ok(Some(_)));
+        if !has_key {
+            return Ok(Some("还没有填 API key：设置 → AI".to_string()));
+        }
+    }
+    Ok(None)
+}
+
 /// 保存 API key（DPAPI 加密后写入 `llm-key.bin`；**不写进配置文件**）
 #[tauri::command]
 pub fn llm_save_key(state: State<'_, AppState>, key: String) -> Result<LlmStatusDto, String> {
@@ -825,6 +914,15 @@ pub fn open_chat(app: AppHandle, label: String) -> Result<(), String> {
 #[tauri::command]
 pub fn close_chat(app: AppHandle, label: String) -> Result<(), String> {
     crate::chat_window::close(&app, &label)
+}
+
+/// 调整对话输入窗的高度：`mode="status"` = 带一行提示（高），其余 = 常态一条胶囊。
+///
+/// 为什么让页面来表达"要不要那一行"：高度是宿主的几何（它知道宠物在哪、屏幕多大），
+/// 而"现在有没有话要说"只有页面知道。两边各管一半，接口就一个白名单字符串。
+#[tauri::command]
+pub fn resize_chat(app: AppHandle, label: String, mode: String) -> Result<(), String> {
+    crate::chat_window::resize(&app, &label, &mode)
 }
 
 /// 读某只宠物的记忆（设置窗口展示 / 排障）
