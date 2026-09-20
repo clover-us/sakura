@@ -2511,3 +2511,65 @@ NSIS 用 Unicode（UTF-16），没这个问题；WiX/MSI 默认用 Windows-1252�
 - **CI 出包**：现在是手动三条命令；要自动化得加 GitHub Actions（runner 上能下载 NSIS/WiX）；
 - 62 MB 的安装包体积：素材是 VP9-alpha 视频，压缩率本就有限；若在意体积可考虑
   「精简包（不带素材）+ 素材单独下载」两条产线。
+
+---
+
+# 18. 右键菜单在生产构建里丢样式：`style-src` 的 nonce 反噬（2026-09-20）
+
+## 18.1 现象
+
+安装版（`D:\software\whale-pet`）右键宠物，菜单只有**一排黑字**贴在壁纸与角色身上：
+没有白底圆角面板、没有边框阴影、悬停展开的二级面板也没弹到右侧，而是**顺着文档流
+叠在一级面板下面**（截图里 "动作 / 工具" 之后紧跟着 "转向 / 拖拽 / 点击回应 / …"）。
+
+这个现象只在生产/安装版出现；同一天用 `tauri dev` 看是好好的——所以按本文件的老规矩，
+它必须记在"release 才算数"这一类里。
+
+## 18.2 证据
+
+**① 不是"透明窗画不出白色"**：对用户截图逐像素统计，`233×490` 内**纯白像素 0/28665**；
+同期 `docs/screenshots/tray-menu.png`（同样是透明置顶窗里的自绘菜单）纯白像素占 **79.1%**。
+
+**② 样式整份没生效**，不只是背景丢了：
+
+| 判据 | 截图实测 | `MENU_CSS` 的规定 |
+| --- | --- | --- |
+| 文字颜色 | 采到 `4,6,10` / `0,1,2`（浏览器默认黑） | `#2b2b2b` = (43,43,43) |
+| 二级面板位置 | 直接叠在一级面板**下方** | `.dsh-pet-menu-column{position:absolute}` → 应弹到右侧 |
+| 面板背景 | 无（壁纸直接从文字后面透出来） | `rgba(255,255,255,.98)` + 圆角 + 阴影 |
+
+**③ 影响面只有一处**：全仓 `createElement('style')` 仅 `src/menu-page.ts:131` 一处；
+各 HTML 里没有任何 `style="…"` 内联属性——所以这正是"唯一在运行期注入样式"的页面。
+
+**根因链**（版本与本机构建一致：tauri 2.11.5 / tauri-utils 2.9.3 / tauri-codegen 2.6.3）：
+
+1. `tauri-codegen` 的 `inject_nonce_token` 给 HTML 里**已有的**内联 `<style>` 打上
+   `nonce="__TAURI_STYLE_NONCE__"`（`menu.html` 里正好有一段）；
+2. 运行时 `tauri::manager::set_csp` → `replace_csp_nonce` 把它换成随机 nonce，
+   并把 `'nonce-…'` 追加进 `style-src`；
+3. CSP 规则：**指令里出现 nonce/hash 时 `'unsafe-inline'` 被忽略** → 运行期新建的那个
+   没有 nonce 的 `<style>` 被拦下。JS 照跑（命令走 IPC 不经 CSP 的 style 检查），
+   所以菜单 DOM 在、点击也能用，**只是没有样式**。
+
+## 18.3 修法
+
+`src-tauri/tauri.conf.json` 的 `app.security` 增加一行：
+
+```jsonc
+"dangerousDisableAssetCspModification": ["style-src"]
+```
+
+→ Tauri 不再注入 style 的 nonce token、也不再往 `style-src` 追加 nonce，策略回到
+`'self' 'unsafe-inline'` 的字面语义。**不是安全回退**：该指令本来就写着 `'unsafe-inline'`，
+此前那份 nonce 恰好把这句声明废掉了；`script-src` 的 nonce/hash 保护完全不动
+（详见 `TAURI-CONFIG.md` 的「运行期注入的 `<style>` 与 nonce」，那里同时记了为什么
+没选"给注入的 `<style>` 抄 nonce"那条路——`getAttribute('nonce')` 在现代浏览器返回空串，
+写错会静默失效）。
+
+## 18.4 待验证（诚实记录）
+
+| 项 | 状态 |
+| --- | --- |
+| 根因判定（18.2） | **已验证**（截图逐像素 + 上述 crates 的源码路径 + 全仓只有一处运行期样式注入） |
+| 修法生效（安装版右键出白底面板） | **未验证**：需要重新出包 → 实装 → 右键确认。开发模式本来就没问题，**不能当证据** |
+| 其它运行期注入样式/样式属性的场景 | 当前**不存在**（18.2③）；日后新增时不必再为此改配置 |
