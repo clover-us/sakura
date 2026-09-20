@@ -96,7 +96,10 @@ pwsh -File scripts\import-animations.ps1 -Stage
 cd src-tauri
 cargo run --bin logic-smoke      # 114 项断言：配置解析/校验/写回、每宠独立动画池、路径防穿越、
                                  # JSONC 注释、几何换算、余额档位、表情包标记、记忆文件容错…
-cargo run --example make-icon    # 重新生成 icons/（图形源是 SVG，见 src-tauri/icons/design/）
+cargo run --example make-icon    # 重新生成 icons/ + src/assets/app-logo.png
+                                 # 图形源在 src-tauri/icons/design/：默认 app-icon.png（位图），
+                                 # 同目录的 app-icon-<尺寸>.png 会被当作该尺寸的原图直接使用；
+                                 # 也可以 --svg <路径> / --png <路径> / --sheet 换源或只出对比图
 ```
 
 ## 五、诊断日志与探针
@@ -183,6 +186,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 │  ├─ settings-page.ts            设置页：整份配置进出，改哪几个字段就动哪几个
 │  ├─ chat-page.ts                对话输入窗页
 │  ├─ bridge/                     tauri.ts（`window.__TAURI__` 唯一入口）/ contract.ts（数据契约）/ log.ts
+│  ├─ assets/app-logo.png         应用图标（make-icon 的产物，页头 logo 直接引用它）
 │  └─ renderer/
 │     ├─ runtime.ts               核心装配：位置真相、命中判定、窗口跟随、输入状态机
 │     ├─ chain.ts                 动画链（掷骰选下一段、转向、随机动作、走路计划）
@@ -212,7 +216,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 │  │  │  ├─ watchdog.rs           取锁/窗口操作计时 + 主线程健康看门狗
 │  │  │  ├─ diagnostics.rs        诊断日志落盘 + 受控自测/探针入口
 │  │  │  └─ bin/                  logic-smoke.rs（114 项断言）/ mock-llm.rs（本地假 LLM 端点）
-│  │  ├─ examples/make-icon.rs    图标生成：SVG → png/ico/托盘 RGBA（resvg 只在 dev-dependencies）
+│  │  ├─ examples/make-icon.rs    图标生成：图形源（SVG/PNG）→ png/ico/托盘 RGBA/前端 logo（resvg 只在 dev-dependencies）
 │  │  ├─ icons/                   design/*.svg 图形源 + 生成物
 │  │  └─ capabilities/default.json 最小权限集
 ├─ reference/shared/              ← 从上游逐字节拷贝的纯逻辑（**零改动**）

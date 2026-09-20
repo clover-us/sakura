@@ -27,6 +27,9 @@
  */
 import { petLog, petLogError, setLogLabel } from './bridge/log.ts';
 import { invoke } from './bridge/tauri.ts';
+// 应用图标（用户给的原子图标）：由 `cargo run --example make-icon` 一并产出到这个路径，
+// 与 exe/托盘用的是同一张图的同一个图形源（见 src-tauri/icons/design/）
+import appLogoUrl from './assets/app-logo.png';
 
 // ============================================================================
 //  与 Rust 侧同构的类型（只声明本页读写得到的字段）
@@ -218,30 +221,20 @@ function icon(name: string, size = 15): string {
 }
 
 /**
- * 应用图标的小尺寸内联版（与 `icons/design/app-icon.svg` 同一造型：青绿圆角底 +
- * 趴在横条上的小生物）。
+ * 应用图标的小标记（侧栏页头、关于页用）。
  *
- * 为什么不直接引用那个 SVG 文件：应用图标是"一份矢量源 + 预生成产物"，
- * 而页面只需要一个 22px 的小标记；内联一份简化版最省事，也不必让 webview 去请求图标文件。
- * **但它必须跟着图标一起改**——早先这里留的是旧版粉色小鲸鱼，用户截图圈出来说"这两处都没改"。
+ * 图形源是 `src-tauri/icons/design/app-icon.png`（用户给的原子图标），
+ * `cargo run --example make-icon` 顺手把同一张图导出成 `src/assets/app-logo.png`，
+ * 页面直接引用它——**页头、托盘菜单、exe、任务栏、托盘图标从此是同一份图形**。
+ *
+ * 为什么不再手写内联 SVG：以前那版小鲸鱼是手抄一份简化 SVG，靠"改图标时记得两处同步"
+ * 这条纪律对齐（早先漏改过一次，用户截图圈出来说"这两处都没改"）；
+ * 而新图标是位图素材（用户只给了 PNG，没有矢量源），手抄必然走样。
+ * 换成引用产物之后，"忘记同步"这个失败模式**从根上没有了**——但要记得跑 make-icon。
  */
-const PET_LOGO = `
-<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-  <rect x="4.4" y="21" width="23.2" height="6" rx="3" fill="#fff" opacity="0.96"/>
-  <circle cx="8.6" cy="24" r="1.1" fill="#9BE0D8"/>
-  <circle cx="12.2" cy="24" r="1.1" fill="#FFD9A8"/>
-  <circle cx="15.8" cy="24" r="1.1" fill="#BBD7FF"/>
-  <path d="M11.4 11.6c.8-3 2.6-3.8 3.6-1.8l1 2.1Z" fill="#fff"/>
-  <path d="M20.6 11.6c-.8-3-2.6-3.8-3.6-1.8l-1 2.1Z" fill="#fff"/>
-  <ellipse cx="10.6" cy="19.4" rx="2.7" ry="1.6" fill="#fff" transform="rotate(-14 10.6 19.4)"/>
-  <ellipse cx="21.4" cy="19.4" rx="2.7" ry="1.6" fill="#fff" transform="rotate(14 21.4 19.4)"/>
-  <path d="M16 8.4c5 0 7.8 3.4 7.8 6.5 0 3.3-3.4 5-7.8 5s-7.8-1.7-7.8-5c0-3.1 2.8-6.5 7.8-6.5Z" fill="#fff"/>
-  <ellipse cx="13.7" cy="14.3" rx="1.15" ry="1.3" fill="#22384A"/>
-  <ellipse cx="18.3" cy="14.3" rx="1.15" ry="1.3" fill="#22384A"/>
-  <ellipse cx="11.4" cy="17.2" rx="1.4" ry="0.85" fill="#FF9EC0"/>
-  <ellipse cx="20.6" cy="17.2" rx="1.4" ry="0.85" fill="#FF9EC0"/>
-  <path d="M14.8 17.3c.5.9 2 .9 2.5 0" fill="none" stroke="#22384A" stroke-width="0.9" stroke-linecap="round"/>
-</svg>`;
+function appLogo(size: number): string {
+  return `<img class="app-logo" src="${appLogoUrl}" width="${size}" height="${size}" alt="" draggable="false" />`;
+}
 
 // ============================================================================
 //  DOM 工具
@@ -1183,13 +1176,7 @@ function renderAboutPage(): HTMLElement {  if (!config) throw new Error('配置�
   const node = card('关于', 'whale-pet desktop：把上游鲸鱼桌宠做成独立的 Windows 桌面应用（Tauri v2）。');
   const logoRow = el('div', 'row');
   const logo = el('div');
-  logo.style.width = '56px';
-  logo.style.height = '56px';
-  logo.style.borderRadius = '16px';
-  logo.style.background = 'linear-gradient(160deg, #8FE6DC, #39A9C9)';
-  logo.style.display = 'grid';
-  logo.style.placeItems = 'center';
-  logo.innerHTML = PET_LOGO;
+  logo.innerHTML = appLogo(56);
   logoRow.appendChild(logo);
   const meta = el('div');
   meta.style.marginLeft = '14px';
@@ -1454,7 +1441,7 @@ function applyThemeOverride(): void {
 function bind(): void {
   applyThemeOverride();
   setLogLabel('settings');
-  byId('brand-logo').innerHTML = PET_LOGO;
+  byId('brand-logo').innerHTML = appLogo(26);
   // 顶部与底部的按钮是静态 HTML：这里补上图标（用同一套 Lucide 形状）
   byId('btn-open-file').innerHTML = `${icon('folder-open', 14)}<span>打开配置文件</span>`;
   byId('btn-reload').innerHTML = `${icon('rotate-ccw', 14)}<span>放弃改动</span>`;

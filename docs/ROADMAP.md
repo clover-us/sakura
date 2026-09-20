@@ -91,6 +91,10 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
       每次弹出回到全收起状态
 - [x] **图标选定**（2026-09-19 用户验收）：第四款 `d-pet-peek`（长耳朵小生物趴在任务栏上，不指向物种）
       换一款：`cargo run --example make-icon -- --svg design/candidates/<名字>.svg`
+- [x] **应用图标换成用户给的「原子」图标**（2026-09-21）：两套样式（彩色 / 黑描边）里选**彩色**
+      （黑描边在深色任务栏上轨道会消失）；图形源改成位图 `design/app-icon.png`，
+      16/32/64 直接用用户给的原图帧，其余尺寸由 `make-icon` 面积平均重采样；
+      三处页头 logo 改为引用同一份产物（`src/assets/app-logo.png`）。见 `VERIFICATION.md` 第 22 节
 
 **出口标准**：界面风格统一、有导航与层级；行为归属清晰（谁的动作池是谁的）。
 

@@ -54,8 +54,7 @@ pub fn build(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     TrayIconBuilder::with_id(ID)
-        // 图标是预生成的 RGBA（源自 icons/design/app-icon.svg，与 exe 的 .ico 同源）
-        // 改一处两处同时变；托盘用 `Detail::Tray`（省掉 16px 看不清的气泡与嘴、尾叶加粗）
+        // 图标是预生成的 RGBA（源自 icons/design/，与 exe 的 .ico 同源）
         .icon(tray_icon_image())
         // 没有任何原生菜单：左键直接切换显隐，右键弹自绘菜单
         .show_menu_on_left_click(false)
@@ -81,12 +80,13 @@ pub fn build(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 /// 托盘图标：**预生成的裸 RGBA**（32×32，4096 字节）。
 ///
-/// 图标源是 SVG（`icons/design/app-icon.svg`），由 `cargo run --example make-icon` 栅格化成
-/// `icons/tray-32.rgba`；这里直接 `include_bytes!` 吃进来。
+/// 图形源在 `icons/design/`（当前是用户给的原子图标 `app-icon.png`，见那里的 README），
+/// 由 `cargo run --example make-icon` 产出 `icons/tray-32.rgba`；这里直接 `include_bytes!` 吃进来。
 ///
-/// 为什么不在运行时画：应用**不该为了一个图标背上 SVG 渲染器**（resvg 及其依赖在二进制里
-/// 是好几 MB）。预生成还有个附带好处：托盘图标与 exe/任务栏用的 `.ico` **出自同一张 SVG**，
-/// 不可能不一致。（第一版是用 Rust 画 SDF，观感差到被用户点名"图标丑"，故换成 SVG。）
+/// 为什么不在运行时解码：应用**不该为了一个图标背上图像解码/渲染器**（resvg 及其依赖在二进制里
+/// 是好几 MB）。预生成还有个附带好处：托盘图标与 exe/任务栏用的 `.ico` **出自同一份图形源**，
+/// 不可能不一致。（第一版是用 Rust 画 SDF，观感差到被用户点名"图标丑"；第二代换成手写 SVG；
+/// 2026-09-21 用户给了位图素材，源随之改成 PNG。）
 const TRAY_RGBA: &[u8] = include_bytes!("../icons/tray-32.rgba");
 /// 托盘图标边长（必须与 `examples/make-icon.rs` 的 `TRAY_SIZE` 一致）
 const TRAY_SIZE: u32 = 32;

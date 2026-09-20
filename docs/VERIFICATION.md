@@ -2894,4 +2894,110 @@ pnpm tauri dev
 >（20.5 里"debug 产物已内含 dist，直接可看"那句对本轮不成立——要么带上 dev server，
 > 要么用 `tauri build`／带 `--features custom-protocol` 出正式产物，见 19 节①）。
 
+# 22. 应用图标换成用户给的「原子」图标（2026-09-21）
+
+**用户给的素材**：`C:\Users\admin\Pictures\pic\` 里 8 张 PNG——**同一个"原子轨道"图标的两套样式**
+（彩色 / 黑色描边），每套 16/32/64/256 四个尺寸。要求："使用这里面的图标作为应用中的各种图标，
+两种样式你可以自己选择"。
+
+**范围（当场问过用户，选了第一项）**：换**应用图标全套**——exe / 任务栏 / 托盘图标 / 安装包，
+加上三处品牌 logo（设置侧栏、设置「关于」页、托盘菜单页头）。菜单里的**功能图标**
+（眼睛 / 房子 / 齿轮 / 退出…）继续用 Lucide：一个图形当不了这些图标，硬套只会更难认。
+
+## 22.1 选型：**彩色**那款（判据是"在哪儿都看得见"）
+
+两套样式的几何**完全相同**（同一张图两种描边），差别只在笔画颜色与粗细：
+
+| 样式 | 浅色底（应用界面 / 浅色任务栏） | 深色底（深色任务栏 / 深色界面） |
+| --- | --- | --- |
+| **彩色**（淡蓝轨道 + 红/青/琥珀三颗电子） | 偏淡，但三颗电子仍有颜色可认 | **清楚** |
+| 黑描边（黑色轨道 + 三颗彩色电子） | **清楚**（Windows 自己的托盘图标也是这个路子） | **轨道整个消失**，只剩三个点 |
+
+实测对比图：[`screenshots/icon-style-compare.png`](screenshots/README.md)（两种样式 × 16/24/32/48/64 ×
+浅色/深色四种底）。**选彩色**：最坏情况（深色底上的黑描边）是"看不见"，而浅色底上的彩色只是"偏淡"——
+应用图标是要长期待在任务栏与托盘里的，宁可淡一点也不能消失。深色那两款截图见 22.4。
+
+> 另一个候选方案是"黑描边走浅色、彩色走深色"按主题切换，托盘图标也做得到（宿主可以读
+> `AppsUseLightTheme`）——但 exe 图标、安装包图标是**一个文件**，切换不了，同一应用出现两种
+> 身份反而乱。放弃了。
+
+## 22.2 图形源从矢量换成位图（用户没给矢量源）
+
+`icons/design/` 以前的纪律是"**矢量 SVG 是唯一源**"（`app-icon.svg` + resvg 栅格化）。
+用户这次给的只有 PNG，没有路径可循，于是 `make-icon` 多了一条位图通道（`--png`）：
+
+| 环节 | 做法 | 为什么 |
+| --- | --- | --- |
+| 默认源 | `icons/design/app-icon.png`（256px，彩色那款） | 用户给的最大的那张 |
+| **原图帧优先** | 同目录的 `app-icon-<尺寸>.png` 直接吃进来（16/32/64 各一张） | 用户本来就给了这四个尺寸；重采样出来的 16px 会比原图**淡一截**（细笔画的 alpha 被平均掉），而托盘用的正是 32px 那张 |
+| 其余尺寸 | 自己算：缩小走**面积平均**，颜色在**线性光**里平均；放大走双线性（只有 1024 的 `icon.png` 用到） | 256 → 24 这种非整数倍也一样；双线性只采 4 个点，会把 6px 宽的轨道漏掉 |
+| 候选对比图 | `icons/candidates.png` 现在同时认 `.svg` 与 `.png` 候选 | 挑样式那套工具不能因为换了源就失效 |
+
+另一套样式**没有丢**：`design/candidates/atom-line.png`（256）留在候选里，它自己的 16/32/64
+放在 `design/alt/`，日后想换回来改一个默认源重跑即可。
+
+## 22.3 三处页头 logo：改成引用同一份产物
+
+以前页头的小鲸鱼是**手抄的内联 SVG**（`settings-page.ts` 与 `tray-menu-page.ts` 各一份），
+靠"改图标时记得两处同步"这条纪律对齐——早先漏改过一次，用户截图圈出来说"这两处都没改"。
+位图源没法手抄，索性换掉这条路：
+
+```text
+icons/design/app-icon.png ──make-icon──► src/assets/app-logo.png（128px）
+                                              │  Vite 当普通资源处理
+                                              ▼
+                     settings-page.ts / tray-menu-page.ts 的 appLogo(size) → <img src=…>
+```
+
+"忘记同步"这个失败模式**从根上没有了**（代价是改图标必须跑一次 `make-icon`——本来也要跑，
+`tray-32.rgba` 一直是这么来的）。页头那圈青绿圆角底也去掉了：图形自带颜色，垫底色反而脏。
+
+## 22.4 证据
+
+**① 产物与用户原图逐像素一致**（不是"看起来差不多"）：
+
+```text
+icons/32x32.png      vs 用户的 32px  → 通道差异像素 = 0，最大通道差 = 0
+icons/128x128@2x.png vs 用户的 256px → 通道差异像素 = 0，最大通道差 = 0
+```
+
+**② 新图标真的进了 exe**（从二进制里提取，`ExtractAssociatedIcon` → 32×32 原子图标）：
+
+> 踩坑重演一次：`icons/icon.ico` 改完直接 `cargo build` 提取出来**还是旧的小鲸鱼**——
+> 图标由构建脚本嵌进去，而构建脚本只在 `tauri.conf.json` 变化时重跑。按第 11 节的记录
+> 碰一下 `tauri.conf.json` 的修改时间再构建，提取结果才是原子图标。
+
+**③ 三处 logo 的真机截图**（`scripts/capture-window.ps1`，浅色/深色各一遍）：
+
+| 位置 | 截图 |
+| --- | --- |
+| 设置侧栏页头（26px） | [`screenshots/settings-pet.png`](screenshots/README.md) / 深色 [`settings-dark.png`](screenshots/README.md) |
+| 设置「关于」页（56px） | [`screenshots/settings-about.png`](screenshots/README.md) |
+| 托盘菜单页头（26px） | [`screenshots/tray-menu.png`](screenshots/README.md) / 深色 [`tray-menu-dark.png`](screenshots/README.md) |
+
+**④ 托盘图标**：`icons/tray-32.rgba` 就是用户那张 32px 原图（裸 RGBA，4KB），
+`tray.rs` 原样 `include_bytes!`——托盘那一格不需要再验证"像不像"，它就是原图。
+
+**⑤ 最终产物阶梯**：[`screenshots/icon-sizes.png`](screenshots/README.md)（从 `icon.ico`
+逐帧提取的 16/24/32/48/64/128/256，浅色/深色两种底）。16/32/64 是用户原图帧（更锐），
+24/48/128 是本工具重采样的（略柔）——同一张图，衔接上没有跳变。
+
+## 22.5 本轮已验证 / 未验证
+
+| 项 | 状态 |
+| --- | --- |
+| `pnpm run typecheck` / `vite build`（36 modules，多出 app-logo 资源） | 已跑：退出码 0 |
+| `cargo build`（debug，重新嵌图标后） | 已跑：0 error |
+| exe 图标 | 已从二进制提取核对（22.4 ②） |
+| 三处 logo（浅色 + 深色） | 已截图（22.4 ③） |
+| **托盘通知区里的实际观感** | **未验证**：通知区截图抓不到（Win11 还会把它收进"隐藏的图标"浮出层，见 10.7），只核到"喂给 `TrayIconBuilder` 的 RGBA 就是原图"这一层 |
+| 安装目录 `D:\software\whale-pet` | **未替换**：跑的还是旧图标；要生效需重装或替换 exe |
+
+## 22.6 怎么看到这次修复
+
+```powershell
+cd D:\programs\deepseek\sakura
+pnpm tauri dev          # 或 cargo run --example make-icon 后重跑出包
+```
+
 

@@ -22,6 +22,9 @@
  */
 import { petLog, petLogError, setLogLabel } from './bridge/log.ts';
 import { invoke } from './bridge/tauri.ts';
+// 应用图标（用户给的原子图标）：与设置窗侧栏、exe、任务栏是**同一张图**，
+// 由 `cargo run --example make-icon` 产出（见 src-tauri/icons/design/）
+import appLogoUrl from './assets/app-logo.png';
 
 // ============================================================================
 //  与宿主对接的类型
@@ -98,28 +101,16 @@ function icon(name: string, size = 16): string {
 }
 
 /**
- * 应用图标的小尺寸内联版（与 `icons/design/app-icon.svg` 同造型：青绿底 + 趴在横条上的小生物）。
+ * 应用图标的小标记（页头）。
  *
- * **必须跟着图标一起改**：早先这里留的是旧版粉色小鲸鱼，用户截图圈出来说"这两处都没改"
- * （设置窗口侧栏的品牌 logo 是同一份，也在 `settings-page.ts`）。
+ * 图形源是 `src-tauri/icons/design/app-icon.png`（用户给的原子图标），
+ * `cargo run --example make-icon` 把同一张图导出成 `src/assets/app-logo.png`，页面引用它。
+ * 以前这里手写内联 SVG（旧版小鲸鱼），必须靠"改图标时记得两处同步"的纪律对齐——
+ * 新图标是位图素材（用户只给了 PNG），手抄必然走样，索性直接引用同一份产物。
  */
-const PET_LOGO = `
-<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-  <rect x="4.4" y="21" width="23.2" height="6" rx="3" fill="#fff" opacity="0.96"/>
-  <circle cx="8.6" cy="24" r="1.1" fill="#9BE0D8"/>
-  <circle cx="12.2" cy="24" r="1.1" fill="#FFD9A8"/>
-  <circle cx="15.8" cy="24" r="1.1" fill="#BBD7FF"/>
-  <path d="M11.4 11.6c.8-3 2.6-3.8 3.6-1.8l1 2.1Z" fill="#fff"/>
-  <path d="M20.6 11.6c-.8-3-2.6-3.8-3.6-1.8l-1 2.1Z" fill="#fff"/>
-  <ellipse cx="10.6" cy="19.4" rx="2.7" ry="1.6" fill="#fff" transform="rotate(-14 10.6 19.4)"/>
-  <ellipse cx="21.4" cy="19.4" rx="2.7" ry="1.6" fill="#fff" transform="rotate(14 21.4 19.4)"/>
-  <path d="M16 8.4c5 0 7.8 3.4 7.8 6.5 0 3.3-3.4 5-7.8 5s-7.8-1.7-7.8-5c0-3.1 2.8-6.5 7.8-6.5Z" fill="#fff"/>
-  <ellipse cx="13.7" cy="14.3" rx="1.15" ry="1.3" fill="#22384A"/>
-  <ellipse cx="18.3" cy="14.3" rx="1.15" ry="1.3" fill="#22384A"/>
-  <ellipse cx="11.4" cy="17.2" rx="1.4" ry="0.85" fill="#FF9EC0"/>
-  <ellipse cx="20.6" cy="17.2" rx="1.4" ry="0.85" fill="#FF9EC0"/>
-  <path d="M14.8 17.3c.5.9 2 .9 2.5 0" fill="none" stroke="#22384A" stroke-width="0.9" stroke-linecap="round"/>
-</svg>`;
+function appLogo(size: number): string {
+  return `<img class="app-logo" src="${appLogoUrl}" width="${size}" height="${size}" alt="" draggable="false" />`;
+}
 
 // ============================================================================
 //  页面状态
@@ -211,7 +202,7 @@ function renderMenu(): void {
   panel().innerHTML = `
     <div class="view" id="view-menu">
       <div class="head">
-        <div class="logo">${PET_LOGO}</div>
+        <div class="logo">${appLogo(26)}</div>
         <div class="head-text">
           <strong>whale-pet</strong>
           <span>${subtitle}</span>

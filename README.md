@@ -55,7 +55,8 @@
 需要适配的地方一律在本仓库这层包一层（例如弹簧系数只在 `src/renderer/drag.ts` 里偏离）。
 
 **技术栈**：Tauri v2（Rust）+ WebView2（Chromium）+ 原生 TypeScript / Vite，**前端不用框架、不引 UI 库**；
-界面图标是 [Lucide](https://lucide.dev) 的形状内联，应用图标是自绘 SVG 栅格化。
+界面图标是 [Lucide](https://lucide.dev) 的形状内联，应用图标由 `cargo run --example make-icon`
+从 `src-tauri/icons/design/` 的图形源栅格化成 exe / 托盘 / 页头三份。
 
 ---
 
@@ -187,6 +188,8 @@ M2.5 外观与结构 ✅ / M3 加分能力（LLM）✅ 基本完成；M4 发布�
 - 代码：MIT（与上游一致）
 - 素材（动画/提示词/源视频）：**允许开源使用，禁止商用**（上游约定，本应用沿用）
 - 界面图标形状：[Lucide](https://lucide.dev)（ISC 许可），已内联进 `src/tray-menu-page.ts` 与
-  `src/settings-page.ts`；应用图标为本项目自绘（`src-tauri/icons/design/`）
+  `src/settings-page.ts`
+- 应用图标：**用户提供的素材**（原子轨道图标，`src-tauri/icons/design/`；
+  由 `cargo run --example make-icon` 栅格化）——来源与许可由项目所有者确认，仓库里只留了两套样式的原图
 
 > 本仓库**只读取**上游 [`PC2005-cloud/whale-pet`](https://github.com/PC2005-cloud/whale-pet)，从不修改它。
