@@ -101,6 +101,9 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 
 ### 3.1 安装
 
+**下载**：[最新 Release](https://github.com/clover-us/sakura/releases/latest)（当前 `v1.0.0`，
+发布说明见 [`docs/releases/v1.0.0.md`](docs/releases/v1.0.0.md)，含两个安装包的 SHA256）。
+
 | 产物 | 大小 | 说明 |
 | --- | --- | --- |
 | `whale-pet_1.0.0_x64-setup.exe` | 约 62 MB | NSIS 安装器，**推荐**（中文安装界面，Unicode） |
