@@ -813,6 +813,17 @@ function renderSystemPage(): HTMLElement {
       showToast('这一项是固定行为，不需要配置');
     }),
   );
+  single.appendChild(
+    checkRow(
+      true,
+      '入口在托盘：左键显示/隐藏，右键打开菜单',
+      'Windows 11 默认把新出现的托盘图标收进「隐藏的图标」浮出层——找不到宠物时，点任务栏右下角的 ^ 看看，' +
+        '把它拖到任务栏上就能常驻。首次启动时宠物也会自己说一句提醒。',
+      () => {
+        showToast('这一项是固定行为，不需要配置');
+      },
+    ),
+  );
   host.appendChild(single);
   return host;
 }

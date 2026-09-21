@@ -302,9 +302,14 @@ match config::ensure_sample_animations(&app_data_dir) {
     reload::mark_stamp_current(&config_path);
     eprintln!("[whale-pet] 配置热重载已就绪（每 {}ms 检查一次文件变化）", reload::POLL_MS);
 
+    // ---- 5.7 首次运行提示（**只提示一次**）----
+    // 装完最常见的问题是"宠物在跑，但不知道入口在哪"：托盘是桌宠唯一的常驻入口，
+    // 而 Win11 默认把新图标收进「隐藏的图标」浮出层——用户对着桌面找半天。
+    // 所以第一次启动让宠物自己说一句（复用碎碎念那条气泡链路，不联网）。
+    hint_first_run(app);
+
     // ---- 6. 轮询线程（光标采样 + 显示器几何 + 配置热重载） ----
-    spawn_poll_loop(app.clone());
-    // ---- 6.5 主线程健康看门狗（**独立线程**：轮询线程自己也可能是被卡住的那个，见 watchdog.rs） ----
+    spawn_poll_loop(app.clone());    // ---- 6.5 主线程健康看门狗（**独立线程**：轮询线程自己也可能是被卡住的那个，见 watchdog.rs） ----
     watchdog::spawn_main_watchdog(app.clone());
 
     // ---- 7. 排障探针（仅在设置 WHALE_PET_DIAG_PRESS 时启用，见 diagnostics 里的说明） ----
@@ -406,6 +411,52 @@ match config::ensure_sample_animations(&app_data_dir) {
 /// 与"持锁期间为什么绝不能动窗口"两条约定。
 fn build_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     tray::build(app)
+}
+
+/// 首次运行提示写下的标记文件名（在应用数据目录里；内容 = 当时的版本号）
+const FIRST_RUN_HINT_FILE: &str = "first-run-hint";
+
+/// 首次运行提示的文案：一句话说清"入口在哪"。
+///
+/// 气泡按 16 字一行估算尺寸（`bubble::estimate`），这句约 3 行、宽度不会顶到上限。
+const FIRST_RUN_HINT_TEXT: &str =
+    "我在这儿～右下角托盘里的图标就是我：左键显示/隐藏，右键菜单。Win11 可能把我收进「隐藏的图标」";
+
+/// 第一次启动时让宠物说一句"我在托盘里"（**只一次**，见调用处的说明）。
+///
+/// 三个刻意的取舍：
+///   - 标记文件写在**数据目录**而不是配置里：配置是用户的东西（会被手改、会被重置成模板），
+///     混一个"看没看过提示"的字段进去不合适；标记丢了最多再提示一次，无害；
+///   - 标记在**说出口之后**才写：2.5 秒内就退出（比如秒退）的话，下次还会提示一次——
+///     宁可重复一次，也别让用户永远看不到；
+///   - 提示**不参与排障/自测**：那些场景跑的是同一套窗口，气泡会跑进截图里。
+fn hint_first_run(app: &AppHandle) {
+    let probing = std::env::vars()
+        .any(|(key, _)| key.starts_with("WHALE_PET_DIAG") || key.starts_with("WHALE_PET_AUTOTEST"));
+    let marker = app.state::<AppState>().app_data_dir.join(FIRST_RUN_HINT_FILE);
+    if probing || marker.is_file() {
+        return;
+    }
+    let Some(label) = app
+        .state::<AppState>()
+        .pets
+        .lock()
+        .map(|pets| pets.keys().next().cloned())
+        .unwrap_or(None)
+    else {
+        return; // 没有宠物可说话（正常配置下不会发生）
+    };
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        // 等宠物页导航完成：气泡窗是预建的，但页面没就绪的话这一句会被丢掉
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        crate::whisper::emit(&handle, &label, FIRST_RUN_HINT_TEXT, None);
+        match std::fs::write(&marker, env!("CARGO_PKG_VERSION")) {
+            Ok(()) => eprintln!("[whale-pet] 首次运行提示已显示（标记写入 {}）", marker.display()),
+            Err(err) => eprintln!("[whale-pet] 写首次运行标记失败 {}：{err}", marker.display()),
+        }
+    });
 }
 
 /// 启动轮询线程：光标采样（穿透自愈 + 拖拽兜底）、显示器几何变化检测、配置热重载。

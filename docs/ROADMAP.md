@@ -136,7 +136,8 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
 - [ ] 崩溃与错误上报（本地日志 + 可选）
 - [ ] 自动更新（`tauri-plugin-updater`，可选；**依赖代码签名**，见 `SIGNING.md`）
 - [ ] 素材分发策略确认：全部内置（+52MB）还是首启下载
-- [ ] 安装包里剔掉开发用的 `logic-smoke.exe`（MSI 的 File 表里有 `Bin_logic_smoke`，1.4 MB，普通用户用不到）
+- [x] 安装包里剔掉开发用的 `logic-smoke.exe`（2026-09-21：`src/bin/` 下的两个开发工具挪到
+      `examples/`，bin 目标才会被打进包；顺手给冒烟加了"版本号四处一致"的断言）
 - [ ] 代码签名（OV 证书，约 ¥1000–3000/年）：选型与接法见 `SIGNING.md`
 
 ---

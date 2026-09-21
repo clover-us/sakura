@@ -1,14 +1,21 @@
 //! 纯逻辑冒烟检查（可执行文件，不依赖 Rust 测试 harness）。
 //!
-//! 为什么要单独做这么一个 bin：
+//! 为什么要单独做这么一个工具：
 //!   本机是 MinGW-w64 + `x86_64-pc-windows-gnu` 工具链，`cargo test` 生成的 libtest
 //!   可执行文件在启动时会被 Windows 加载器拒绝（`0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND`），
 //!   而同一个 crate 编出来的主程序能正常运行——导入表逐项比对完全一致，属于工具链/环境
 //!   层面的问题，不是代码问题。为了让「配置解析、校验、路径防穿越、几何换算」这些纯逻辑
-//!   **真的被执行到**（而不是只通过编译），这里用普通 bin 把它们跑一遍。
+//!   **真的被执行到**（而不是只通过编译），这里用普通程序把它们跑一遍。
 //!
-//! 运行：cargo run --bin logic-smoke
+//! 运行：cargo run --example logic-smoke
 //! 退出码：0 = 全部通过；1 = 有失败（并打印失败项）
+//!
+//! ## 为什么放在 `examples/` 而不是 `src/bin/`
+//!
+//! 它和 `mock-llm` 原先都是 bin 目标，结果 **`logic-smoke.exe` 被 Tauri 一起打进了
+//! 安装包**（MSI 的 File 表里能查到 `Bin_logic_smoke`，1.4 MB）——普通用户拿到一个
+//! 不知道干什么的 exe，既占体积又容易被杀软盯上。改成 example 之后 `cargo build`
+//! 默认**不编译**它们，打包自然也就带不上了（用法只多了 `--example` 这个词）。
 
 use whale_pet_desktop_lib::config::{load_config, AppConfig};
 use whale_pet_desktop_lib::model::{PhysicsParams, Rect};
@@ -797,12 +804,54 @@ fn main() {
         );
     }
 
+    // ---- 15. 版本号四处一致 ----
+    // 版本号写在四个地方，出包用的是 tauri.conf.json、界面上显示的是 settings-page.ts 那一行，
+    // 少改一处就会出现"安装包叫 1.0.0、关于页写着 0.1.0"这种对外可见的不一致。
+    // （2026-09-21 出 1.0.0 时真发生过：DEVELOPMENT 里也漏了一处，见 VERIFICATION 第 23/24 节。）
+    println!("\n[15] 版本号四处一致");
+    {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let cargo_version = env!("CARGO_PKG_VERSION").to_string();
+        let tauri_version = read_json_field(&format!("{manifest}/tauri.conf.json"), "version");
+        let pkg_version = read_json_field(&format!("{manifest}/../package.json"), "version");
+        let ui_version = std::fs::read_to_string(format!("{manifest}/../src/settings-page.ts"))
+            .ok()
+            .and_then(|text| {
+                // 界面上那一行长这样：el('strong', undefined, 'whale-pet 1.0.0')
+                // 注意别抓到别处的 `'whale-pet …'`（"关于"页的描述文案也以它开头），
+                // 所以要求引号里剩下的部分**以数字开头**（版本号）
+                text.lines().find_map(|line| {
+                    let rest = line.split("'whale-pet ").nth(1)?;
+                    let value = rest.split('\'').next()?;
+                    value.starts_with(|c: char| c.is_ascii_digit()).then(|| value.to_string())
+                })
+            });
+
+        check(
+            "Cargo.toml / tauri.conf.json / package.json / 关于页 四处版本号一致",
+            tauri_version.as_deref() == Some(cargo_version.as_str())
+                && pkg_version.as_deref() == Some(cargo_version.as_str())
+                && ui_version.as_deref() == Some(cargo_version.as_str()),
+            &format!(
+                "Cargo.toml={cargo_version} tauri.conf.json={:?} package.json={:?} 关于页={:?}（改版本号要四处一起改）",
+                tauri_version, pkg_version, ui_version
+            ),
+        );
+    }
+
     // SAFETY: 单线程
     let (passed, failed) = unsafe { (PASSED, FAILED) };
     println!("\n=== 结果：通过 {passed} 项，失败 {failed} 项 ===");
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+/// 从 JSON 文件里取一个**顶层**字符串字段（版本号用；失败返回 None，由断言报出来）
+fn read_json_field(path: &str, field: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value.get(field)?.as_str().map(str::to_string)
 }
 
 /// 规范化 JSON：递归按键名排序后序列化。

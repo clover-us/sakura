@@ -27,6 +27,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 | `tray-menu-picker.png` | 托盘菜单 · 动作点播：**分类默认全部收起**，右侧显示每个分类的条数 |
 | `tray-menu-picker-expanded.png` | 托盘菜单 · 点开「待机」之后：只展开被点的分类，窗口自动变高 |
 | `tray-menu-toast.png` | 托盘菜单 · **失败提示完整可见**（点「查余额」时 AI 未开启 → 两行提示都在面板里，见 VERIFICATION 21 节） |
+| `menu-production.png` | **生产构建里的宠物右键菜单**（release exe + 合成右键探针）：白底圆角面板正常渲染——18 节的 `style-src` nonce 问题在生产构建上回归通过 |
+| `first-run-hint.png` | **首次启动的托盘提示**：宠物头顶气泡说出"入口在右下角托盘"，只在第一次启动出现（见 VERIFICATION 24 节） |
 | `settings-dark.png` | 设置窗口 · **深色**（`?theme=dark` 强制；默认仍跟随系统） |
 | `tray-menu-dark.png` | 托盘菜单 · **深色**（同上） |
 | `icon-sizes.png` | **当前应用图标的全尺寸阶梯**（从 `icon.ico` 里逐帧提取：16/24/32/48/64/128/256，浅色/深色两种底） |

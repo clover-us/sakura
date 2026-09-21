@@ -141,6 +141,7 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 | `memory.json` | 对话记忆（开了 AI 才有） |
 | `llm-key.bin` | API Key（DPAPI 加密，仅本机本用户可解） |
 | `pet-debug.log` | 诊断日志 |
+| `first-run-hint` | 记"首次运行提示已经说过了"（内容 = 当时的版本号）。删掉它，下次启动宠物会再说一次 |
 
 几条要点：
 
@@ -159,7 +160,7 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 M2.5 外观与结构 ✅ / M3 加分能力（LLM）✅ 基本完成；M4 发布：本机已能产出 NSIS + MSI，
 签名与自动更新未做。
 
-- 纯逻辑冒烟 **114 项断言全通过**（`cargo run --bin logic-smoke`）；
+- 纯逻辑冒烟 **115 项断言全通过**（`cargo run --example logic-smoke`）；
 - 已知限制里对使用者最要紧的两条：**安装包未签名**（会提示「未知发布者」）、
   **右键菜单在生产构建里的观感待回归**（根因已定位并修复，见 [验证记录第 18 节](docs/VERIFICATION.md)）；
 - 完整的状态、逐项限制与"未验证项"清单见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#九当前状态与已知限制)，

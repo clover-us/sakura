@@ -3,9 +3,12 @@
 //! 用法：
 //!
 //! ```powershell
-//! cargo run --bin mock-llm            # 默认监听 127.0.0.1:8787
-//! cargo run --bin mock-llm -- 9000    # 指定端口
+//! cargo run --example mock-llm            # 默认监听 127.0.0.1:8787
+//! cargo run --example mock-llm -- 9000    # 指定端口
 //! ```
+//!
+//! （放在 `examples/` 而不是 `src/bin/`：bin 目标会被 Tauri 打进安装包——
+//! `logic-smoke.exe` 就这么进过一次，见那个文件头部的说明。）
 //!
 //! 然后把配置指向它，即可**不花一分钱、不需要真实 key** 跑通整条链路：
 //!

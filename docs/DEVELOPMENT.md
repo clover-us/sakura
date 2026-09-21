@@ -79,6 +79,15 @@ pwsh -File scripts\import-animations.ps1 -Stage
 > 顺手加个 BOM，serde_json 见到 BOM 直接解析失败）。2026-09-21 出 1.0.0 时真踩了一次，
 > 只好 `git checkout` 还原后逐行改。用编辑器改，或者用 `.NET` 的
 > `[System.IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)` + `WriteAllText(..., UTF8Encoding($false))`。
+>
+> 用 .NET 那套时还有两个坑，同一天连着踩：
+>   - **相对路径是按"进程工作目录"解析的**，不是 PowerShell 的当前位置（`cd` 不影响它）。
+>     写 `'..\package.json'` 会落到仓库外面去；
+>   - **`WriteAllText($p, $null)` 会创建一个 0 字节文件**。造出来的空 `package.json` 会一路向上
+>     被 vite/esbuild 找到，构建报 `Unexpected end of file in JSON`（排查花了十几分钟，
+>     最后是 `Get-ChildItem D:\programs\deepseek` 看到那个 0 字节文件）。
+>
+> 另外 `.ps1` 里出现中文必须存成 **UTF-8 with BOM**（见 §五 末尾）；临时脚本干脆写成纯 ASCII 最省事。
 
 **素材怎么进安装包**：`tauri.conf.json` 的 `bundle.resources` 把 `assets/{webm,memes,pic,fonts}`
 映射进资源目录；首次启动由 `src-tauri/src/assets_seed.rs` **只补缺失地**释放到数据目录
@@ -114,8 +123,9 @@ pwsh -File scripts\import-animations.ps1 -Stage
 
 ```powershell
 cd src-tauri
-cargo run --bin logic-smoke      # 114 项断言：配置解析/校验/写回、每宠独立动画池、路径防穿越、
-                                 # JSONC 注释、几何换算、余额档位、表情包标记、记忆文件容错…
+cargo run --example logic-smoke  # 115 项断言：配置解析/校验/写回、每宠独立动画池、路径防穿越、
+                                 # JSONC 注释、几何换算、余额档位、表情包标记、记忆文件容错、版本号一致性…
+                                 # （放在 examples/ 而不是 bin/：bin 目标会被 Tauri 打进安装包）
 cargo run --example make-icon    # 重新生成 icons/ + src/assets/app-logo.png
                                  # 图形源在 src-tauri/icons/design/：默认 app-icon.png（位图），
                                  # 同目录的 app-icon-<尺寸>.png 会被当作该尺寸的原图直接使用；
@@ -256,7 +266,9 @@ Remove-Item src-tauri\target\release -Recurse -Force
 │  │  │  ├─ commands.rs / state.rs 前端可调用的命令 / 共享状态
 │  │  │  ├─ watchdog.rs           取锁/窗口操作计时 + 主线程健康看门狗
 │  │  │  ├─ diagnostics.rs        诊断日志落盘 + 受控自测/探针入口
-│  │  │  └─ bin/                  logic-smoke.rs（114 项断言）/ mock-llm.rs（本地假 LLM 端点）
+│  │  │  └─ src/bin/              （已清空：开发工具都挪到 examples/，免得被打进安装包）
+│  │  ├─ examples/logic-smoke.rs  纯逻辑冒烟（115 项断言，`cargo run --example logic-smoke`）
+│  │  ├─ examples/mock-llm.rs     本地假 LLM 端点（`cargo run --example mock-llm`）
 │  │  ├─ examples/make-icon.rs    图标生成：图形源（SVG/PNG）→ png/ico/托盘 RGBA/前端 logo（resvg 只在 dev-dependencies）
 │  │  ├─ icons/                   design/*.svg 图形源 + 生成物
 │  │  └─ capabilities/default.json 最小权限集
@@ -345,7 +357,7 @@ M3 加分能力（LLM）✅ 基本完成 / M4 发布：NSIS + MSI 已产出并�
 | 限制 / 未验证 | 说明 | 计划 |
 | --- | --- | --- |
 | 右键菜单的生产版观感 | 根因已定位并修复（`style-src` 的 nonce 让运行期注入的菜单样式被拦，见 `VERIFICATION.md` 第 18 节），**但修法尚未在生产构建上回归** | 装一次新出的包确认白底面板 |
-| `cargo test` 跑不起来 | GNU 工具链下 libtest 可执行文件被加载器拒绝（`0xC0000139`，导入表与主程序一致，属环境问题）。改用 `cargo run --bin logic-smoke` | 换 MSVC 工具链或在正常环境跑 |
+| `cargo test` 跑不起来 | GNU 工具链下 libtest 可执行文件被加载器拒绝（`0xC0000139`，导入表与主程序一致，属环境问题）。改用 `cargo run --example logic-smoke` | 换 MSVC 工具链或在正常环境跑 |
 | 仅 Windows | 透明窗/穿透/DPI 都按 Windows 验证 | macOS 需 `.mov` 素材 + 签名公证；Linux 合成器差异大 |
 | 多显示器跨屏抛掷未做观感回归 | 本机只有一块屏（几何/校验/放行逻辑已就位） | 需双屏机器回归一次 |
 | 高 DPI 未做观感回归 | 本机 DPR=1（100%） | 需 125%/150% 的机器各跑一次 |

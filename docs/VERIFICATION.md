@@ -3151,4 +3151,127 @@ README 里的安装包名与「当前状态」的版本号也同步成 1.0.0（�
 | 安装包版本元数据 | 已核对（23.3 ④） |
 | 实跑安装器 | **未做**（原因见 23.4） |
 
+# 24. 装机体验与打包卫生（2026-09-21，A 组四项全做）
+
+起因：用户问"当前还有什么要优化的么"，给出的 A 组（马上能做的）四条**全部执行**。
+
+## 24.1 安装包里的开发工具（`logic-smoke.exe`）
+
+**问题（上节查出来的）**：MSI 的 File 表里有 `Bin_logic_smoke`——1.4 MB 的冒烟测试程序
+被 Tauri 一起打进了安装包，普通用户拿到一个不知道干什么的 exe，既占体积又容易被杀软盯上。
+
+**改法**：`src/bin/` 下的两个开发工具（`logic-smoke.rs`、`mock-llm.rs`）整体挪到 `examples/`。
+bin 目标会被打包器枚举，example 不会（`cargo build` 默认也不编译它们）。
+用法只多一个词：`cargo run --example logic-smoke`。
+
+**证据**：
+
+```text
+改前：产物 62.3 MB（NSIS）/ 63.6 MB（MSI），wxs 里有 <File Id="Bin_logic_smoke" …>
+改后：产物 61.7 MB / 62.8 MB，wxs 里搜 logic-smoke / mock-llm 均无命中
+      （顺带核对：WebView2Loader.dll 仍在文件列表里——DEVELOPMENT §三 坑 1 没被这次改动碰坏）
+```
+
+> 历史小节（VERIFICATION 9.x / 13.x）里 `cargo run --bin …` 的写法保留原样，那是当时的记录；
+> 现在请用 `--example`。
+
+## 24.2 版本号四处防呆（冒烟里加一条断言）
+
+版本号写在 `Cargo.toml` / `tauri.conf.json`（出包名取它）/ `package.json` / 设置页「关于」那一行，
+少改一处就会"安装包叫 1.0.0、关于页写着 0.1.0"（出 1.0.0 时 DEVELOPMENT 里就漏过一处）。
+冒烟程序新增第 15 组：读三份文件 + 用 `env!("CARGO_PKG_VERSION")`，四者必须一致。
+
+**证据（正反两面都跑过）**：
+
+```text
+正常：  [15] 版本号四处一致 → [通过]（冒烟总计 115 项、0 失败）
+故意把 package.json 改成 1.0.1：
+        [失败] …四处版本号一致 —— Cargo.toml=1.0.0 tauri.conf.json=Some("1.0.0")
+              package.json=Some("1.0.1") 关于页=Some("1.0.0")（改版本号要四处一起改）
+        （改回后重新通过）
+```
+
+## 24.3 首次运行引导：宠物自己告诉你入口在哪
+
+**问题**：Win11 默认把新出现的托盘图标收进「隐藏的图标」浮出层，而托盘是桌宠唯一的常驻入口——
+装完"宠物在跑但找不到菜单"是必然会发生的。
+
+**改法**（两处）：
+
+| 位置 | 内容 |
+| --- | --- |
+| 首次启动 | 2.5 秒后让宠物用**碎碎念那条气泡链路**说一句：`我在这儿～右下角托盘里的图标就是我：左键显示/隐藏，右键菜单。Win11 可能把我收进「隐藏的图标」`（`lib.rs::hint_first_run`） |
+| 设置 · 启动与系统 | 新增一行「入口在托盘：左键显示/隐藏，右键打开菜单」，说明怎么把图标拖到任务栏常驻 |
+
+三个刻意的取舍（都写在代码注释里）：标记文件放**数据目录**（`first-run-hint`）而不是配置里；
+标记**说出口之后**才写（2.5 秒内秒退的话下次还说，宁可重复一次）；**排障/自测时不提示**
+（`WHALE_PET_DIAG*` / `WHALE_PET_AUTOTEST` 存在就跳过，否则气泡会跑进探针截图）。
+
+**证据**：删掉标记文件后跑 release exe（不设任何探针环境变量）：
+
+```text
+[whale-pet] 首次运行提示已显示（标记写入 …\com.whalepet.desktop\first-run-hint）
+[pet-main-0] 碎碎念: 我在这儿～右下角托盘里的图标就是我：左键显示/隐藏，右键菜单。Win11 可能把我收进「隐藏的图标」
+[pet-main-0] 气泡: 显示「…」锚点 (1038,131) 时长 10000ms
+标记文件内容 = 1.0.0；第二次启动不再提示
+```
+
+截图：[`screenshots/first-run-hint.png`](screenshots/README.md)（气泡在宠物头顶，四行、无乱码）、
+[`screenshots/settings-system.png`](screenshots/README.md)（设置里新增那一行）。
+
+## 24.4 装一次真包，把三件悬着的事一次关掉
+
+之前一直是"绕过 NSIS 换 exe"，所以注册表里的版本、卸载器、以及"安装包里到底有没有
+`WebView2Loader.dll`"都没验证过。这次用**静默安装**覆盖同一个目录：
+
+```powershell
+Get-Process whale-pet-desktop | Stop-Process -Force
+& '...\bundle\nsis\whale-pet_1.0.0_x64-setup.exe' /S /D=D:\software\whale-pet
+```
+
+| 项 | 装前 | 装后 |
+| --- | --- | --- |
+| 注册表 `...\Uninstall\whale-pet` 的 `DisplayVersion` | 0.1.0 | **1.0.0**（"程序和功能"里对上了） |
+| `uninstall.exe` | 0.1.0 那版（09-21 00:59） | 重新生成（09-21 23:40，132310 字节） |
+| `WebView2Loader.dll` | 在（老安装留下的） | **在**（新安装器自己写的）→ 坑 1 的疑问闭环 |
+| `whale-pet-desktop.exe` | 手工替换的那份 | 安装器写的（`FileVersion=1.0.0`） |
+| 桌面/开始菜单快捷方式 | 指向 `D:\software\whale-pet` | 不变，仍然有效 |
+
+**顺手清掉两样**：旧安装留下的 `logic-smoke.exe`（新安装器已不再包含它，NSIS 也不会删别人的文件）
+与我之前备份的 `whale-pet-desktop.exe.old-0.1.0`。
+
+**右键菜单的生产版观感**（DEVELOPMENT 已知限制表里最后一条悬着的）：
+
+```text
+探针：WHALE_PET_DIAG_PRESS=right（合成右键）
+日志：菜单窗显示 menu-pet-main-0：右键点=(1038,226) →窗口原点=(492,226) 内缩进=(546,0)
+截图：screenshots/menu-production.png —— 白底圆角面板 + 「动作 / 工具」两行，样式完好
+```
+
+页面 URL 是 `http://tauri.localhost/menu.html?…`（内嵌资源、`custom-protocol` 生效），
+所以这次跑的确实是**生产构建**，18 节那个 nonce 问题在生产构建上回归通过。
+
+## 24.5 本轮已验证 / 未验证
+
+| 项 | 状态 |
+| --- | --- |
+| `cargo run --example logic-smoke` | 115 项 / 0 失败（含新增的版本号一致性） |
+| `tauri build --target x86_64-pc-windows-gnu`（含 NSIS + MSI） | `BUNDLE_EXIT=0`；产物 61.7 / 62.8 MB |
+| 包里不再有开发工具 | 已核对 wxs（改动前后体积也对得上） |
+| 首次运行提示 | 已截图 + 日志 + 标记文件三证 |
+| 设置里的托盘说明 | 已截图 |
+| 真机安装（静默、覆盖同目录） | 已跑：注册表版本 1.0.0、卸载器刷新、DLL 在、快捷方式有效 |
+| 右键菜单生产版观感 | 已截图回归 |
+| 安装包**分发**给真实用户 | **未做**：仍是本机自测；签名问题见 [`SIGNING.md`](SIGNING.md) |
+
+## 24.6 踩坑：两个"文件系统层面"的坑（都记进 DEVELOPMENT）
+
+1. **PowerShell 的 `[System.IO.File]::WriteAllText($p, $null)` 会创建一个 0 字节文件**，
+   而 .NET 的相对路径是按**进程工作目录**（不是 PowerShell 的当前位置）解析的——
+   我用 `'..\package.json'` 做负向测试，就在仓库**外面**（`D:\programs\deepseek\`）造了一个
+   空 `package.json`；随后 vite/esbuild 往上找 package.json 时读到它，直接报
+   `Unexpected end of file in JSON`，构建全挂。删掉这个空文件即恢复（记录在这里，免得下次又找半天）。
+2. `.ps1` 里有中文必须 **UTF-8 with BOM**（老坑，这次又踩：临时脚本里写了中文 `Write-Host`，
+   PS 5.1 按 ANSI 读 → `The string is missing the terminator`）。本次所有临时脚本改成纯 ASCII。
+
 
