@@ -107,6 +107,8 @@ pwsh -File scripts\import-animations.ps1 -Stage
 > 坑 1 / 2 的实测记录见 [VERIFICATION.md](VERIFICATION.md) 第 17 节，坑 3 的根因链与证据见第 18 节。
 > 另外：`pnpm tauri:build` 走的是 `--no-bundle`（只出 exe，**不产安装包**），别拿它当出包命令。
 > 安装包**未做代码签名**，装的时候 Windows 会提示「未知发布者」。
+> 为什么没签、四条路各要多少钱、拿到证书后 `bundle.windows` 具体加哪几个字段（含自签演练
+> 与 signtool 从哪来），都记在 [`SIGNING.md`](SIGNING.md)。
 
 ## 四、冒烟检查与图标
 
@@ -351,5 +353,5 @@ M3 加分能力（LLM）✅ 基本完成 / M4 发布：本机已能产出 NSIS +
 | 无跨窗碰撞 | 多宠物可开，但宠物之间不碰撞（`petCollision` 目前是占位开关） | 见 ROADMAP |
 | 无点击积分 | 飞行中被按下的粒子与积分卡未做 | 见 ROADMAP |
 | AI：多把 Key 不能共存 | 密钥库目前单槽位，"LLM 用 DeepSeek + 余额查 OpenCode"需要改成 `{provider: key}` 映射 | 下一轮 |
-| 安装包未签名 | Windows 会提示「未知发布者」 | 需要代码签名证书 |
+| 安装包未签名 | Windows 会提示「未知发布者」 | 要 OV 代码签名证书（约 ¥1000–3000/年）；路子与接法见 [`SIGNING.md`](SIGNING.md) |
 | 从 dsh-pet 一键导入未做 | 素材导入已有 `scripts/import-animations.ps1`，设置窗口里的一键入口未做 | 见 ROADMAP |

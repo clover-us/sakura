@@ -107,6 +107,7 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 | `whale-pet_1.0.0_x64_zh-CN.msi` | 约 64 MB | MSI（代码页 936，中文素材文件名必需） |
 
 - 安装包**未做代码签名**，Windows 会提示「未知发布者」，选择继续即可；
+  想彻底解决这件事（要买 OV 证书、约 ¥1000–3000/年）见 [代码签名怎么搞](docs/SIGNING.md)；
 - 运行环境：Windows + WebView2 运行时（Win10/11 一般系统自带）。GNU 工具链下 exe 还依赖
   `WebView2Loader.dll`——按 [开发文档的出包命令](docs/DEVELOPMENT.md#三出包生成完整安装包) 出包时
   它会被一起打进安装器（**本机只核到"NSIS 体积 +0.1 MB、与该 DLL 相符"，装一次确认仍在待办里**）；
@@ -178,6 +179,7 @@ M2.5 外观与结构 ✅ / M3 加分能力（LLM）✅ 基本完成；M4 发布�
 | [`docs/VERIFICATION.md`](docs/VERIFICATION.md) | **验证记录**：每个里程碑的实跑证据、踩过的坑与复盘、明确写出的"未验证项" |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | 里程碑与待办、待决的产品问题 |
 | [`docs/TAURI-CONFIG.md`](docs/TAURI-CONFIG.md) | `tauri.conf.json` 逐字段说明与 CSP 的每条理由 |
+| [`docs/SIGNING.md`](docs/SIGNING.md) | 代码签名：四条路各要多少钱、本机现状、拿到证书后怎么接进出包流程 |
 | [`docs/LLM.md`](docs/LLM.md) | AI 能力设计：provider 表、密钥存储、请求形状、记忆结构、交互形态 |
 | [`docs/screenshots/`](docs/screenshots/README.md) | 全部界面截图与抓取方法 |
 
