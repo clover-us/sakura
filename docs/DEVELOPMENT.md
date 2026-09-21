@@ -333,8 +333,9 @@ Remove-Item src-tauri\target\release -Recurse -Force
 
 ## 九、当前状态与已知限制
 
-**版本 v0.1.0**；里程碑：M0 技术验证 ✅ / M1 宠物本体 ✅ / M2 像个正经应用 ✅ / M2.5 外观与结构 ✅ /
-M3 加分能力（LLM）✅ 基本完成 / M4 发布：本机已能产出 NSIS + MSI，签名与自动更新未做。
+**版本 v1.0.0**；里程碑：M0 技术验证 ✅ / M1 宠物本体 ✅ / M2 像个正经应用 ✅ / M2.5 外观与结构 ✅ /
+M3 加分能力（LLM）✅ 基本完成 / M4 发布：NSIS + MSI 已产出并可装（本机 2026-09-21 出 1.0.0 包），
+代码签名与自动更新未做。
 逐项状态与待办见 [ROADMAP.md](ROADMAP.md)；每条"已完成"的证据都在 [VERIFICATION.md](VERIFICATION.md)
 （纯逻辑冒烟 **114 项断言全通过**）。
 

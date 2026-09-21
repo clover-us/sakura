@@ -129,11 +129,15 @@ M0 已完成（验证结论见 [`VERIFICATION.md`](VERIFICATION.md)）。以下�
 
 ## M4 发布
 
-- [ ] `tauri build` 产出 NSIS 安装包 + MSI（需在能联网的机器上，本机沙箱下载不了打包器）
-- [ ] 全套图标（`pnpm tauri icon <1024.png>`）
+- [x] `tauri build` 产出 NSIS 安装包 + MSI（2026-09-21 出 v1.0.0 包：`whale-pet_1.0.0_x64-setup.exe` / `.msi`，
+      见 `VERIFICATION.md` 第 23 节；命令见 `DEVELOPMENT.md` §三）
+- [x] 全套图标（没走 `pnpm tauri icon`，而是 `cargo run --example make-icon` 产出 ico/png/托盘 RGBA/页头 logo，
+      图形源在 `icons/design/`；见 `VERIFICATION.md` 第 22 节）
 - [ ] 崩溃与错误上报（本地日志 + 可选）
-- [ ] 自动更新（`tauri-plugin-updater`，可选）
+- [ ] 自动更新（`tauri-plugin-updater`，可选；**依赖代码签名**，见 `SIGNING.md`）
 - [ ] 素材分发策略确认：全部内置（+52MB）还是首启下载
+- [ ] 安装包里剔掉开发用的 `logic-smoke.exe`（MSI 的 File 表里有 `Bin_logic_smoke`，1.4 MB，普通用户用不到）
+- [ ] 代码签名（OV 证书，约 ¥1000–3000/年）：选型与接法见 `SIGNING.md`
 
 ---
 
