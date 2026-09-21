@@ -103,8 +103,8 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 
 | 产物 | 大小 | 说明 |
 | --- | --- | --- |
-| `whale-pet_0.1.0_x64-setup.exe` | 约 62 MB | NSIS 安装器，**推荐**（中文安装界面，Unicode） |
-| `whale-pet_0.1.0_x64_zh-CN.msi` | 约 64 MB | MSI（代码页 936，中文素材文件名必需） |
+| `whale-pet_1.0.0_x64-setup.exe` | 约 62 MB | NSIS 安装器，**推荐**（中文安装界面，Unicode） |
+| `whale-pet_1.0.0_x64_zh-CN.msi` | 约 64 MB | MSI（代码页 936，中文素材文件名必需） |
 
 - 安装包**未做代码签名**，Windows 会提示「未知发布者」，选择继续即可；
 - 运行环境：Windows + WebView2 运行时（Win10/11 一般系统自带）。GNU 工具链下 exe 还依赖
@@ -154,7 +154,7 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 
 ## 四、当前状态
 
-**版本 v0.1.0**（仅 Windows x64）。里程碑：M0 技术验证 ✅ / M1 宠物本体 ✅ / M2 像个正经应用 ✅ /
+**版本 v1.0.0**（仅 Windows x64）。里程碑：M0 技术验证 ✅ / M1 宠物本体 ✅ / M2 像个正经应用 ✅ /
 M2.5 外观与结构 ✅ / M3 加分能力（LLM）✅ 基本完成；M4 发布：本机已能产出 NSIS + MSI，
 签名与自动更新未做。
 

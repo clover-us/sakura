@@ -589,7 +589,7 @@ function renderPetPage(pet: PetEntry, index: number): HTMLElement {
   const host = el('div', 'page-inner');
 
   // ---- 基本信息 ----
-  const basic = card('基本信息', '尺寸是包围盒宽度（高度按 9:16 推出）；角落与边距决定启动落点，「回到初始位置」用的是同一套语义。');
+  const basic = card('基本信息', '尺寸是包围盒宽度；角落与边距决定启动落点，「回到初始位置」用的是同一套语义。');
   const grid = el('div', 'grid');
   grid.appendChild(field('显示名', textInput(pet.name, (next) => {
     pet.name = next;
@@ -711,7 +711,7 @@ function renderPhysicsPage(): HTMLElement {
   if (!config) throw new Error('配置尚未载入');
   const physics = config.physics;
   const host = el('div', 'page-inner');
-  const node = card('拖拽与抛掷物理', '这些参数对所有宠物生效（与上游 dsh-pet 的物理参数同一套语义）。');
+  const node = card('拖拽与抛掷物理', '这些参数对所有宠物生效。');
   const grid = el('div', 'grid');
   grid.appendChild(field('重力（px/s²）', numberInput(physics.gravity, (next) => {
     physics.gravity = next;
@@ -858,7 +858,7 @@ function renderAiPage(): HTMLElement {
   // 配图（M3）：一张表情包都没有时把开关置灰并说明原因——
   // 比"打开了却永远不配图"清楚得多（素材要用 import-animations.ps1 -All 导入）
   const memesCount = llmStatus?.memesCount ?? 0;
-  const poolHint = `本机有 ${memesCount} 张表情包（数据目录 memes/，用 scripts\\import-animations.ps1 -All 导入）`;
+  const poolHint = `本机有 ${memesCount} 张表情包`;
   toggles.appendChild(
     checkRow(
       llm.whisper.imageEnabled,
@@ -1022,7 +1022,7 @@ function renderAiPage(): HTMLElement {
   host.appendChild(keyCard);
 
   // ---- 自检与隐私 ----
-  const test = card('连通性自检', '会真发一次最小请求（就是碎碎念那句提示词），用它确认配置是否正确。');
+  const test = card('连通性自检', '发送一次最小请求，用它确认配置是否正确。');
   const testRow = el('div', 'row-actions');
   testRow.appendChild(
     idButton('llm-selftest', '开始自检', () => {
@@ -1171,16 +1171,19 @@ function providerPlaceholder(provider: string, what: 'model' | 'baseUrl'): strin
   return what === 'model' ? `留空用 ${preset.model}` : `留空用 ${preset.baseUrl}`;
 }
 
-function renderAboutPage(): HTMLElement {  if (!config) throw new Error('配置尚未载入');
+function renderAboutPage(): HTMLElement {
+  if (!config) throw new Error('配置尚未载入');
   const host = el('div', 'page-inner');
-  const node = card('关于', 'whale-pet desktop：把上游鲸鱼桌宠做成独立的 Windows 桌面应用（Tauri v2）。');
+  const node = card('关于', 'whale-pet desktop：独立的 Windows 桌面桌宠应用（Tauri v2）。');
   const logoRow = el('div', 'row');
   const logo = el('div');
   logo.innerHTML = appLogo(56);
   logoRow.appendChild(logo);
   const meta = el('div');
   meta.style.marginLeft = '14px';
-  meta.appendChild(el('strong', undefined, 'whale-pet 0.1.0'));
+  // 版本号要跟 src-tauri/Cargo.toml、src-tauri/tauri.conf.json、package.json **四处一起改**
+  // （出包时 Tauri 取 tauri.conf.json 那个，界面上显示的是这一行）
+  meta.appendChild(el('strong', undefined, 'whale-pet 1.0.0'));
   meta.appendChild(el('div', 'inline-hint', `${config.pets.length} 只宠物 · 素材 ${available.length} 条`));
   logoRow.appendChild(meta);
   node.appendChild(logoRow);
@@ -1188,8 +1191,9 @@ function renderAboutPage(): HTMLElement {  if (!config) throw new Error('配置�
   const info = el('div');
   info.style.marginTop = '14px';
   const lines: Array<[string, string]> = [
-    ['代码许可', 'MIT（与上游一致）'],
-    ['素材许可', '允许开源使用，禁止商用（上游约定，本应用沿用）'],
+    // 值里可以带换行（`.info-row .v` 是 `white-space: pre-line`）
+    ['代码许可', 'MIT \n（https://github.com/clover-us/sakura）'],
+    ['素材许可', '允许开源使用，禁止商用'],
     ['文档', 'docs/ROADMAP.md · docs/VERIFICATION.md · docs/TAURI-CONFIG.md'],
   ];
   for (const [key, value] of lines) {

@@ -1,6 +1,6 @@
 [package]
 name = "whale-pet-desktop"
-version = "0.1.0"
+version = "1.0.0"
 description = "whale-pet 独立桌面端：透明置顶小窗桌宠（Tauri v2）"
 authors = ["whale-pet"]
 edition = "2021"

@@ -22,7 +22,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 | `settings-system.png` | 设置窗口 · 启动与系统：开机自启、文件与位置、运行方式 |
 | `settings-about.png` | 设置窗口 · 关于：56px 的应用图标 + 版本/许可/文档（2026-09-21 换图标后新增） |
 | `chat-window.png` | **对话输入窗（M3）**：宠物右上角的单行输入条（回车发送、Esc 关闭；回复走气泡，不在这里堆记录） |
-| `settings-ai.png` | 设置窗口 · **AI（M3）**：总开关/碎碎念/对话、服务商与模型、Key 保存与自检（底部状态栏是"自检通过"的实测结果） |
+| `settings-ai.png` | 设置窗口 · **AI（M3）**：总开关/碎碎念/对话、服务商与模型、Key 保存与自检（自检那一步的真机结果记在 VERIFICATION 第 13 节） |
 | `tray-menu.png` | 托盘菜单（浅色）：应用图标、显示/隐藏切换项、回到初始位置、动作点播、设置、退出 |
 | `tray-menu-picker.png` | 托盘菜单 · 动作点播：**分类默认全部收起**，右侧显示每个分类的条数 |
 | `tray-menu-picker-expanded.png` | 托盘菜单 · 点开「待机」之后：只展开被点的分类，窗口自动变高 |
@@ -35,6 +35,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-window.ps1 -
 
 > 2026-09-21 换应用图标（原子）后，上表中带界面截图的那些**已按新图标重拍**；
 > `icon-candidates.png` 里的鲸鱼候选是历史记录（第 11 节的选型过程），不表示还在用。
+>
+> 同一天出 **v1.0.0** 时又重拍了一次设置页那四张（`settings-pet` / `settings-physics` /
+> `settings-ai` / `settings-about`）：用户手改过文案，图要跟代码一致（版本号那行也从 0.1.0 变成 1.0.0）。
 
 界面风格参考了用户提供的截图：**浅色底 + 左侧竖向导航 + 单一粉色强调色 + 细边框 + 大留白**；
 深色那一套是通过 `prefers-color-scheme` 切换的同一份结构（本机桌面为浅色，深色由 `?theme=dark` 强制渲染）。

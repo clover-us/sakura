@@ -2991,8 +2991,15 @@ icons/128x128@2x.png vs 用户的 256px → 通道差异像素 = 0，最大通�
 | exe 图标 | 已从二进制提取核对（22.4 ②） |
 | 三处 logo（浅色 + 深色） | 已截图（22.4 ③） |
 | **托盘通知区里的实际观感** | **未验证**：通知区截图抓不到（Win11 还会把它收进"隐藏的图标"浮出层，见 10.7），只核到"喂给 `TrayIconBuilder` 的 RGBA 就是原图"这一层 |
-| 安装目录 `D:\software\whale-pet` | **已替换**（22.7）：用新图标重新出 release exe 覆盖，旧 exe 备份成 `whale-pet-desktop.exe.old-whale-icon`；`uninstall.exe` 与 `logic-smoke.exe` 仍是旧的（不影响桌面图标） |
+| 安装目录 `D:\software\whale-pet` | **已替换**（22.7）：用新图标重新出 release exe 覆盖（当时的备份名是 `whale-pet-desktop.exe.old-whale-icon`；1.0.0 覆盖后改叫 `.old-0.1.0`，见 23.4）；`uninstall.exe` 与 `logic-smoke.exe` 仍是旧的（不影响桌面图标） |
 | 安装包（NSIS / MSI） | **已重新出包**（22.8）：图标已核对为新图标；**未实跑安装器** |
+
+## 22.6 怎么看到这次修复
+
+```powershell
+cd D:\programs\deepseek\sakura
+pnpm tauri dev          # 开发模式；或 `cargo run --example make-icon` 后重新出包
+```
 
 ## 22.7 桌面图标为什么一开始没变，后来怎么变的
 
@@ -3066,11 +3073,82 @@ C:\Users\admin\Desktop\whale-pet.lnk         → 16×16 原子图标（小图标
 D 盘可用 209.6 → 216.3 GB。保留的是真正有用的缓存：`target\debug\deps`（依赖编译产物）与
 `target\x86_64-pc-windows-gnu`（出包缓存）。清法与取舍写进了 DEVELOPMENT §五。
 
-## 22.6 怎么看到这次修复
+# 23. v1.0.0（2026-09-21：用户手改文案 + 出正式包）
 
-```powershell
-cd D:\programs\deepseek\sakura
-pnpm tauri dev          # 或 cargo run --example make-icon 后重跑出包
-```
+## 23.1 用户手改的文案（逐条，文案本身一字未动）
+
+用户只说了一句"我手动修改了一些文案"，改动都在 `src/settings-page.ts`（6 处）：
+
+| 位置 | 改前 | 改后 |
+| --- | --- | --- |
+| 宠物页 · 基本信息 | 尺寸是包围盒宽度**（高度按 9:16 推出）**；角落与边距决定启动落点… | 尺寸是包围盒宽度；角落与边距决定启动落点… |
+| 物理参数页 | 这些参数对所有宠物生效**（与上游 dsh-pet 的物理参数同一套语义）**。 | 这些参数对所有宠物生效。 |
+| AI 页 · 表情包提示 | 本机有 N 张表情包**（数据目录 memes/，用 scripts\import-animations.ps1 -All 导入）** | 本机有 N 张表情包 |
+| AI 页 · 连通性自检 | **会真发一次最小请求（就是碎碎念那句提示词），用它**确认配置是否正确。 | **发送一次最小请求，用它**确认配置是否正确。 |
+| 关于页 · 描述 | whale-pet desktop：**把上游鲸鱼桌宠做成独立的 Windows 桌面应用**（Tauri v2）。 | whale-pet desktop：**独立的 Windows 桌面桌宠应用**（Tauri v2）。 |
+| 关于页 · 许可 | 代码许可 `MIT（与上游一致）`；素材许可 `允许开源使用，禁止商用（上游约定，本应用沿用）` | 代码许可 `MIT \n（https://github.com/clover-us/sakura）`；素材许可 `允许开源使用，禁止商用` |
+
+方向看得出来：**去掉上游的痕迹、补上自己的仓库地址**（`clover-us/sakura`）。
+
+**只做了一处配套改动**：`settings.html` 的 `.info-row .v` 加 `white-space: pre-line`——
+"代码许可"那行里的 `\n` 以前会被 HTML 折成一个空格，加了才会真的换行（截图见 23.3）。
+顺手把 `renderAboutPage` 那行"函数声明和 `if` 挤在同一行"的排版掰开了（M3 那轮留下的，与本次无关）。
+
+## 23.2 版本号 0.1.0 → 1.0.0（四处一起改）
+
+| 文件 | 作用 |
+| --- | --- |
+| `src-tauri/Cargo.toml` | crate 版本（`Cargo.lock` 随之更新） |
+| `src-tauri/tauri.conf.json` | **出包名与 exe 属性取它**：产物变成 `whale-pet_1.0.0_x64-*` |
+| `package.json` | 前端工程版本 |
+| `src/settings-page.ts` | 设置页「关于」显示的那行 `whale-pet 1.0.0`（并加了"四处一起改"的注释） |
+
+README 里的安装包名与「当前状态」的版本号也同步成 1.0.0（历史小节里的 v0.1.0 是记录，保留）。
+
+## 23.3 "不要乱码"是怎么核的（这轮的重点）
+
+1. **源文件编码**：`src/settings-page.ts` 是 UTF-8 **无 BOM**，且能通过严格 UTF-8 校验
+   （用户手改后没被编辑器存成 GBK / 带 BOM）；
+2. **产物逐条比对**：出包后的 `dist/assets/settings-*.js` 里 7 条文案全部命中，
+   全文 U+FFFD（替换字符）计数 = **0**；
+3. **生产构建真机截图**：直接跑 `--target x86_64-pc-windows-gnu` 出的 release exe
+   （页面来自内嵌 dist，**不是** dev server），用设置窗探针逐页截图——宠物 / 物理参数 / AI / 关于
+   四页中文全部正常；"关于"页的 `MIT` 与换行后的仓库地址按预期分两行；
+4. **安装包元数据**：NSIS `setup.exe` 与免安装 exe 的 `FileVersion` / `ProductVersion` = `1.0.0`、
+   `ProductName` = `whale-pet`（纯 ASCII）；MSI 的 `Property` 表同样是
+   `ProductName = whale-pet` / `ProductVersion = 1.0.0`；
+5. **自己踩的坑（写下来省下一次）**：改版本号时图快用了
+   `Get-Content -Raw` + `Set-Content -Encoding UTF8` 改三份清单——Windows PowerShell 5.1
+   **按 ANSI(GBK) 读**没有 BOM 的 UTF-8，再按 UTF-8 写回去，`package.json` / `Cargo.toml` 里的中文
+   **全成乱码**（`package.json` 直接 JSON 解析失败），而且 `-Encoding UTF8` 还顺手加了 BOM。
+   已 `git checkout` 还原、改成逐行编辑重做：现在这三份每份只有 **1 行** diff、中文完好、JSON 可解析。
+   教训写进 DEVELOPMENT §三（带中文的 UTF-8 文件别用 PowerShell 的文本 cmdlet 改）。
+
+## 23.4 v1.0.0 产物
+
+| 产物 | 大小 | 路径 |
+| --- | --- | --- |
+| **NSIS 安装器（推荐）** | 62.3 MB | `src-tauri\target\x86_64-pc-windows-gnu\release\bundle\nsis\whale-pet_1.0.0_x64-setup.exe` |
+| MSI | 63.6 MB | `src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\whale-pet_1.0.0_x64_zh-CN.msi` |
+| 免安装 exe | 6.9 MB | `src-tauri\target\x86_64-pc-windows-gnu\release\whale-pet-desktop.exe` |
+
+- 旧的 0.1.0 安装包已从 bundle 目录删掉（只留 1.0.0）；
+- 安装目录 `D:\software\whale-pet` 的 exe 已换成 1.0.0（`FileVersion=1.0.0`），
+  上一版备份改名 `whale-pet-desktop.exe.old-0.1.0`（原来那个 `.old-whale-icon` 更旧、已删）；
+  桌宠已用 1.0.0 重新拉起；
+- **注册表里的版本与 `uninstall.exe` 仍是 0.1.0**：本机装在 `D:\software\whale-pet`
+  （不是 NSIS 默认目录），静默安装会装到默认位置、变成两份，所以没自动装。
+  要"程序和功能"里也显示 1.0.0，手动跑一次 `whale-pet_1.0.0_x64-setup.exe` 并选同一个目录即可。
+
+## 23.5 本轮已验证 / 未验证
+
+| 项 | 状态 |
+| --- | --- |
+| `pnpm run typecheck` / `vite build` | 已跑：0 error |
+| `cargo build`（release，`--target x86_64-pc-windows-gnu`）+ NSIS/MSI 打包 | 已跑：`BUNDLE_EXIT=0` |
+| 四页中文截图（生产构建） | 已截图（23.3 ③），存档见 `screenshots/` |
+| 文案逐条比对 + U+FFFD = 0 | 已跑 |
+| 安装包版本元数据 | 已核对（23.3 ④） |
+| 实跑安装器 | **未做**（原因见 23.4） |
 
 

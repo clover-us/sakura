@@ -1,7 +1,7 @@
 {
   "name": "whale-pet-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "whale-pet 的独立桌面端应用（Tauri v2）：透明置顶小窗 + 手绘透明动画桌宠",
   "type": "module",
   "license": "MIT",

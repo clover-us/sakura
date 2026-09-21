@@ -71,6 +71,15 @@ pwsh -File scripts\import-animations.ps1 -Stage
 > 所以 `--no-bundle` 出的 exe 与打完包的 exe 不是逐字节相同；直接拷出去跑都一样能用，
 > 只是它记得自己"是某个安装包的一部分"。
 
+**改版本号要四处一起改**：`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`（出包名取它）、
+`package.json`、以及设置页「关于」里那一行（`src/settings-page.ts` 的 `whale-pet <版本>`）。
+
+> 这四份文件都带中文，**别用 PowerShell 的 `Get-Content`/`Set-Content` 改**：Windows PowerShell 5.1
+> 按 ANSI(GBK) 读无 BOM 的 UTF-8，再按 UTF-8 写回去，中文会变成乱码（而 `-Encoding UTF8` 还会
+> 顺手加个 BOM，serde_json 见到 BOM 直接解析失败）。2026-09-21 出 1.0.0 时真踩了一次，
+> 只好 `git checkout` 还原后逐行改。用编辑器改，或者用 `.NET` 的
+> `[System.IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)` + `WriteAllText(..., UTF8Encoding($false))`。
+
 **素材怎么进安装包**：`tauri.conf.json` 的 `bundle.resources` 把 `assets/{webm,memes,pic,fonts}`
 映射进资源目录；首次启动由 `src-tauri/src/assets_seed.rs` **只补缺失地**释放到数据目录
 （同名文件已存在就跳过——用户改过/删掉的素材不会被覆盖或复生）。
