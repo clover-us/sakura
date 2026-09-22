@@ -24,7 +24,7 @@ import { petLog, petLogError } from '../bridge/log.ts';
 import type { DisplaysSample, PetConfig, PetRuntime as PetRuntimeState, Rect, Vec2 } from '../bridge/contract.ts';
 import { invoke } from '../bridge/tauri.ts';
 import { prefersReducedMotion } from './dom.ts';
-import { isInsideHitBox, applyHitBoxStyle, scaleHitBox } from './hitbox.ts';
+import { isInsideHitBox, applyHitBoxStyle, scaleHitBox, bodyInsets, type BodyInsets } from './hitbox.ts';
 import { MediaBuffer } from './media-buffer.ts';
 import { CursorChannel, type CursorFrame } from './cursor.ts';
 import { DragController, type PressOrigin } from './drag.ts';
@@ -32,9 +32,6 @@ import { AnimationChain, walkCenterAt, type Facing, type WalkPlan } from './chai
 import { isNoMirrorAnimation } from '@shared/menu.ts';
 import { SquashAnimator, ThrowAnimator, squashDepthForImpact } from './anim.ts';
 import { screenToLocal, windowMargin } from './coords.ts';
-
-/** 拖拽时身体左右允许越出的量（贴边语义：身侧可贴屏幕边，透明边不算） */
-const SIDE_ALLOW_RATIO = 0.15;
 
 /**
  * 采样兜底按下的牵引绳长度（px）：与 drag.ts 的 MAX_DRAG_LEASH 保持同一语义。
@@ -99,6 +96,15 @@ export class PetRuntime {
   private readonly petConfig: PetConfig;
   /** 命中框（包围盒内坐标） */
   private readonly hitBox: Rect;
+  /**
+   * 身体（命中框）相对包围盒四边的透明余量。
+   *
+   * **本项目所有边界语义都按它算**（松手夹取 / 抛掷反弹 / 漫游留边 / 初始落点）：
+   * 包围盒（= 640×360 视频盒）里角色只占中间一块，若按盒子贴边，角色离屏幕边永远差着
+   * 一圈透明像素——用户实测"想让它贴边，做不到"。按身体算之后，角色能真的贴住屏幕边，
+   * 而身体本身永不越界（始终抓得到、看不丢）。几何换算只在 `hitbox.ts::bodyInsets` 一处。
+   */
+  private readonly insets: BodyInsets;
   /** 双缓冲播放器 */
   private readonly media: MediaBuffer;
   /** Q 弹挤压 */
@@ -233,6 +239,7 @@ export class PetRuntime {
     this.petConfig = config;
     this.physics = config.physics ?? DEFAULT_PHYSICS;
     this.hitBox = scaleHitBox(config.size, config.aspectRatio);
+    this.insets = bodyInsets(config.size, config.aspectRatio);
     this.windowSize = {
       width: config.size + windowMargin(config.size) * 2,
       height: Math.round(config.size * config.aspectRatio) + windowMargin(config.size) * 2,
@@ -327,6 +334,12 @@ export class PetRuntime {
     const cursor = this.cursorScreen;
     if (!cursor) return;
     const primaryDown = this.syntheticInputActive() ? this.syntheticPrimaryDown : this.lastSampledPrimaryDown;
+    // **本帧是否观察到"主键由松到按"的那一瞬间**（采样兜底起手的第一道判据，见下面的说明）。
+    // 必须在任何 return 之前更新：它是逐帧状态，漏更一帧就会把"已经按着"误判成"刚按下"。
+    const pressEdge = primaryDown && !this.prevEvaluatedPrimaryDown;
+    this.prevEvaluatedPrimaryDown = primaryDown;
+    // 一次按住只解释一次"为什么没起手"（见下面的兜底起手排障日志）
+    if (!primaryDown) this.samplerBlockLogged = false;
     const local = screenToLocal(cursor, this.boxOrigin);
 
     // **对话输入闸门**：输入条在占用鼠标时，本窗口整段让开。
@@ -417,8 +430,32 @@ export class PetRuntime {
     // 这里曾经写成 `!this.reportedInteractive`——读的是 `setInteractive` **之后**的值，
     // 于是条件恒为假、整个分支是死代码：**穿透态下的第一次按下会被无声吞掉**
     //（用户感受就是"点了没反应，得再点一次"），`?autotest=1/2/10` 这些合成自测也因此全线失效。
-    if (primaryDown && insideBody && !wasInteractive) {
+    //
+    // ## 光有"穿透态"远远不够（用户实测的 bug："在桌面左键选区域，鼠标扫过人物就把它带走了"）
+    //
+    // 采样通道只看到"**现在**按键是按下的 + 光标在身体上"，它看不见"这次按下是冲着谁去的"。
+    // 于是任何**在别处按住左键**的拖动（桌面框选、别的窗口里拖选文字/滚动条/窗口）只要路过
+    // 宠物身体，就会被当成"用户抓住了宠物"——宠物跟着一起走（与第 20 节"拖动输入条带动宠物"
+    // 是同一类根因，只是那次靠对话输入闸门这一条特例挡住了）。
+    //
+    // 现在补两道**通用**判据，两条都不依赖任何窗口消息：
+    //   ① `pressEdge`：本帧必须**亲眼看到**主键由松到按。在别处已经按住的拖动，光标扫进身体时
+    //      按键位一直是 true，永远等不到这个沿 → 直接出局。这是主判据，覆盖全部真实拖动场景。
+    //   ② `!lastSampledForeignCapture`：按下那一瞬间鼠标**没有被别的进程捕获**
+    //      （`display::foreign_mouse_capture`，查 `GetGUIThreadInfo` 的 `hwndCapture`）。
+    //      它补的是"按下与光标进身体落在同一个 16ms 采样间隔里"这种极小概率的巧合；
+    //      查不到时该位为 false（放行），绝不会因为查询失败而吞掉正常点击。
+    if (primaryDown && insideBody && !wasInteractive && pressEdge && !this.lastSampledForeignCapture) {
       this.beginPress(cursor, 'sampler');
+    } else if (primaryDown && insideBody && !wasInteractive && !this.samplerBlockLogged) {
+      // 排障：**本来会走采样兜底起手，却被新判据拦下**时把原因记一次。
+      // 以后遇到"点了没反应"能一眼看出是谁拦的（按下沿=False 最常见：那是外来拖动，
+      // 正是要拦的场景；外来捕获=True 则是别的进程正按着鼠标）。
+      this.samplerBlockLogged = true;
+      petLog(
+        `兜底起手被拦: 按下沿=${pressEdge} 外来捕获=${this.lastSampledForeignCapture} ` +
+          `指针=(${cursor.x.toFixed(0)},${cursor.y.toFixed(0)})（按下沿=false/外来捕获=true 属于外来拖动，预期行为）`,
+      );
     }
   }
 
@@ -642,6 +679,9 @@ export class PetRuntime {
     // 自测期间自测负责喂位置（否则真实采样会把合成轨迹冲掉）——只取按键位
     if (!this.syntheticInputActive()) this.cursorScreen = { x: frame.x, y: frame.y };
     this.lastSampledPrimaryDown = frame.primaryDown;
+    // 外来捕获位只用于"采样兜底能不能起手"（判据 ②）。
+    // 自测的按下是合成的、与宿主采样的捕获位无关，所以合成帧里显式清零（见 syntheticFrame）。
+    if (!this.syntheticInputActive()) this.lastSampledForeignCapture = frame.foreignCapture;
     // 记录"按键位报松开"的起始时刻（看门狗用它排除按下之前的陈旧状态）
     if (frame.primaryDown) {
       this.buttonUpSince = 0;
@@ -660,6 +700,26 @@ export class PetRuntime {
 
   /** 最近一次采样里宿主的按键状态（看门狗与兜底起手用它） */
   private lastSampledPrimaryDown = false;
+
+  /**
+   * 上一次主循环看到的按键位（识别"主键由松到按"的那一瞬间）。
+   *
+   * 用途：采样兜底起手必须**亲眼看到按下的沿**，否则"在别处已经按住、光标扫过宠物"的拖动
+   * 会被当成抓住宠物（用户实测的"桌面框选带走人物"）。详见 `evaluateInput` 的说明。
+   */
+  private prevEvaluatedPrimaryDown = false;
+
+  /**
+   * 最近一次采样里"主键按下的同时，鼠标被**别的进程**的窗口捕获"。
+   *
+   * 这一位只做一件事：给采样兜底起手再加一道闸（见 `evaluateInput` 的判据 ②）。
+   * 主机来源是 `display::foreign_mouse_capture()`（`GetGUIThreadInfo` 的 `hwndCapture`），
+   * 查询失败或没有捕获时为 false = **放行**：宁可少挡一次，也不能因为查询失败吞掉正常点击。
+   */
+  private lastSampledForeignCapture = false;
+
+  /** 本次按住期间是否已经解释过"兜底起手被拦"（避免每帧刷屏；松手时复位） */
+  private samplerBlockLogged = false;
 
   /**
    * 自测是否正在接管输入（合成光标 + 合成按键位）。
@@ -812,7 +872,9 @@ export class PetRuntime {
       maxDist: spec.maxDist,
       margin: spec.margin,
       halfW: size / 2,
-      sideAllow: 0,
+      // 漫游同样按"身体贴边"：`planMove` 的 margin 语义是"身体到屏幕边缘的安全距"，
+      // 传 insets.left 才能让身体（而不是视频盒）走到 margin 那条线上。
+      sideAllow: this.insets.left,
     });
     if (!plan) return null;
     return {
@@ -948,23 +1010,44 @@ export class PetRuntime {
    * 之后用户**再也抓不到它**（用户实测："停止后就无法操控了"）。
    * 抛掷路径自己有边界反弹，这里补的正是"原地放下"这条路径。
    *
-   * 夹取规则与抛掷的边界语义保持一致：左右各允许越出 `sideAllow`（贴边手感），
-   * 垂直方向必须完整落在工作区内。
+   * 夹取规则 = **身体贴边**（与抛掷、漫游、初始落点同一套语义，几何见 `bodyInsets`）：
+   * 四边都允许包围盒越出 `insets`，越出量刚好是画面里那一圈透明像素——
+   * 于是"身体左侧贴住屏幕左边"是合法落点（用户要的"贴边"），而身体本身永不越界。
+   *
+   * 早期版本左右各只放 `SIDE_ALLOW_RATIO = 0.15`，比透明余量（0.3125）小一半：
+   * 角色离屏幕边永远差着 ~17% 个身位，用户实测"想贴边，做不到"，就是这么来的。
    */
   private clampBoxToWorkArea(box: Vec2): Vec2 {
     const size = this.petConfig.size;
     const height = size * this.petConfig.aspectRatio;
-    const sideAllow = size * SIDE_ALLOW_RATIO;
     const center: Vec2 = { x: box.x + size / 2, y: box.y + height / 2 };
     const area = this.areaContaining(center) ?? this.primaryArea;
-    const minX = area.x - sideAllow;
-    const maxX = Math.max(minX, area.x + area.width - size + sideAllow);
-    const minY = area.y;
-    const maxY = Math.max(minY, area.y + area.height - height);
+    const minX = area.x - this.insets.left;
+    const maxX = Math.max(minX, area.x + area.width - size + this.insets.right);
+    const minY = area.y - this.insets.top;
+    const maxY = Math.max(minY, area.y + area.height - height + this.insets.bottom);
     return {
       x: Math.min(Math.max(box.x, minX), maxX),
       y: Math.min(Math.max(box.y, minY), maxY),
     };
+  }
+
+  /**
+   * 把工作区 / 面板按"身体余量"外扩一圈，供抛掷边界使用。
+   *
+   * 为什么用外扩矩形而不是 `sideAllow`：物理层的 `sideAllow` 只作用于左右两轴，
+   * 而角色在画布上**上下也有透明留白**（头顶 32.8px、脚下 16.4px @ size=420）——
+   * 不外扩的话"落到屏幕最底"永远差 16px（脚踩不到工作区底线），顶部同理。
+   * 外扩工作区 + `sideAllow = 0` 让四条边都成为"身体贴边线"，且**不碰 reference/shared**
+   *（上游 `throwBoundsIn` 的 `minY = area.y` 依旧是那套纯逻辑，本层只喂给它不同的矩形）。
+   */
+  private inflateToBody(list: Rect[]): Rect[] {
+    return list.map((rect) => ({
+      x: rect.x - this.insets.left,
+      y: rect.y - this.insets.top,
+      width: rect.width + this.insets.left + this.insets.right,
+      height: rect.height + this.insets.top + this.insets.bottom,
+    }));
   }
 
   /** 开始一次飞行 */
@@ -973,14 +1056,15 @@ export class PetRuntime {
     // 就会让之后每一次甩出都静默失效（用户实测："只有首次能拖出来甩，后面怎么拖都不飞"）。
     // `ThrowAnimator.start()` 内部本身会先 `stop()`，重复调用是安全且语义正确的
     //（"被重新抓住再甩一次"本来就该以新初速重启）。
-    petLog(`飞行: 开始，边界 ${this.knownAreas().length} 块屏`);
+    petLog(`飞行: 开始，边界 ${this.knownAreas().length} 块屏（按身体贴边）`);
     this.thrower.start({
       box,
       velocity,
       size: this.petConfig.size,
-      sideAllow: this.petConfig.size * SIDE_ALLOW_RATIO,
-      areas: this.knownAreas(),
-      panels: this.knownPanels(),
+      // 边界已经由"外扩过的工作区"表达（四边都按身体算），物理层的 sideAllow 保持 0
+      sideAllow: 0,
+      areas: this.inflateToBody(this.knownAreas()),
+      panels: this.inflateToBody(this.knownPanels()),
       onFrame: (next) => this.setBoxOrigin(next),
       onRest: (restBox, impactSpeed) => {
         this.setBoxOrigin(restBox);
@@ -1188,11 +1272,18 @@ export class PetRuntime {
    *
    * 复用创建时用的角落 + 边距语义（`anchorPixel` 由 shared/motion 提供），
    * 取主屏工作区作为基准——与启动定位同一套几何，不会"回到别的地方"。
+   *
+   * **偏移一个身体余量**：`anchorPixel` 是上游浏览器端的"按视频盒贴边"语义
+   *（`reference/shared/**` 逐字节零改动，不改它），而本项目的边距语义是
+   * "**身体**到屏幕边的距离"（与 Rust 建窗时的 `anchor_box` 保持一致）。
+   * 于是把它给出的盒子角落沿角落方向平移一个 `insets`：
+   * 左角 −left、右角 +right、上角 −top、下角 +bottom。
+   * 结果：边距填 0 = 角色真的贴住屏幕边（透明画布允许出屏），且与启动落点完全一致。
    */
   private goHome(): void {
     this.walk = null;
     const area = this.primaryArea;
-    const box = anchorPixel({
+    const anchor = anchorPixel({
       corner: this.petConfig.position.corner,
       marginX: this.petConfig.position.marginX,
       marginY: this.petConfig.position.marginY,
@@ -1201,6 +1292,11 @@ export class PetRuntime {
       H: area.height,
       area,
     });
+    const lane = this.petConfig.position.corner.split('-');
+    const box = {
+      x: anchor.x + (lane.includes('left') ? -this.insets.left : this.insets.right),
+      y: anchor.y + (lane.includes('top') ? -this.insets.top : this.insets.bottom),
+    };
     petLog(`菜单: 回到初始位置 (${box.x.toFixed(0)},${box.y.toFixed(0)})（角落 ${this.petConfig.position.corner}）`);
     this.setBoxOrigin(box);
   }
@@ -1296,6 +1392,22 @@ boxX: this.boxOrigin.x,
   }
 
   /**
+   * 合成自测的公共起手：等宿主的采样管道通，再把窗口落成**穿透态**。
+   *
+   * 为什么必须等：宿主启动时 `create_all` 持有 `state.pets` 锁建窗，而光标轮询线程的
+   * `broadcast_cursor` 也要抢同一把锁 → **页面在前 ~2 秒收不到任何 `pet://cursor`**。
+   * 少了这一步，`?autotest=1` 的第一次按下会落在"窗口还是可交互"的那一帧上
+   *（`reportedInteractive` 的初值就是宿主建窗时的 `interactive=true`），而采样兜底按规矩
+   * 不在可交互时起手（那时该走 DOM）→ 自测直接中止，日志是"身体内按下未被识别"（实测踩过）。
+   *
+   * 再喂一帧"光标在很远的地方"，让命中判定把窗口翻回穿透态——这正是采样兜底起手的前提。
+   */
+  private async warmUpSyntheticInput(): Promise<void> {
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    await this.pumpSynthetic(this.boxOrigin.x - 600, this.boxOrigin.y - 400, false, 60);
+  }
+
+  /**
    * 构造一帧合成采样（屏幕坐标；**按键位由自测覆盖**，见 syntheticPrimaryDown）。
    *
    * 注意：这里刻意不接受 primaryDown 参数——自测运行期间宿主的真实按键是松开的，
@@ -1308,7 +1420,15 @@ boxX: this.boxOrigin.x,
     // 让"合成输入"与"真实输入"严格走同一条路径。
     this.cursorScreen = { x, y };
     this.lastSampledPrimaryDown = this.syntheticPrimaryDown;
-    return { x, y, at: performance.now(), primaryDown: this.syntheticPrimaryDown };
+    // 合成输入没有"外来鼠标捕获"这个概念：清零，免得真实采样里的捕获位把自测的起手挡掉
+    this.lastSampledForeignCapture = false;
+    return {
+      x,
+      y,
+      at: performance.now(),
+      primaryDown: this.syntheticPrimaryDown,
+      foreignCapture: false,
+    };
   }
 
   /**
@@ -1325,6 +1445,7 @@ boxX: this.boxOrigin.x,
 
   /** 自测主序列（与 runSelfTest 分离，便于用 try/finally 恢复被替换的判定函数） */
   private async runSelfTestSequence(log: (message: string) => void): Promise<void> {
+    await this.warmUpSyntheticInput();
     // 从当前包围盒中心按下（命中区中心 = 命中框中心）
     const start: Vec2 = {
       x: this.boxOrigin.x + this.hitBox.x + this.hitBox.width / 2,
@@ -1520,6 +1641,9 @@ boxX: this.boxOrigin.x,
     };
 
     log(`开始 轮数=${rounds}（每轮期望两次起飞：先甩出，再在空中抓住重甩）`);
+    // 起手前先等采样管道通（`warmUpSyntheticInput` 的理由）：启动期页面收不到采样，
+    // 第 1 轮的拖拽轨迹会稀到估不出初速，于是"松手不飞"——**假失败**（实测：5/6 起飞）。
+    await this.warmUpSyntheticInput();
     for (let round = 1; round <= rounds; round += 1) {
       expected += 2;
       if (await dragAndThrow(`第${round}轮·甩出`)) takes += 1;
@@ -1615,6 +1739,98 @@ boxX: this.boxOrigin.x,
     );
     log(`结论: 收尾=${released ? '成功' : '失败'}，区外漂移=${idleDrift.toFixed(1)}px，收尾后漂移=${afterDrift.toFixed(1)}px`);
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
+  }
+
+  /**
+   * 专项自测（`?autotest=11`）：**"在别处按住左键的拖动扫过宠物"不得把宠物抓走**。
+   *
+   * 复现的是用户实测的 bug：在桌面左键框选（或任何别的窗口里拖选文字/滚动条/窗口）时，
+   * 光标扫过宠物身体，宠物就跟着一起动。根因是采样兜底起手只看"按键按着 + 光标在身体上"，
+   * 分不清这次按下是冲着谁去的（判据见 `evaluateInput` 的 ①②）。
+   *
+   * 合成序列（与真实鼠标同粒度，~16ms 一帧）：
+   *   ① 远处、按键松开 —— 建立"松"的基线；
+   *   ② 仍在远处、**按键翻成按下** —— 模拟"这次按下发生在别处"（按下沿在这一帧被吃掉）；
+   *   ③ 按住不放把光标扫进身体，再横向扫走 240px —— **必须不抓、宠物不得位移**
+   *      （修复前：这一步会开始拖拽，宠物跟着光标走）；
+   *   ④ 松手，再走一遍"光标从远处进身体 + 按下" —— **必须抓住**（正常点击不能被误伤）。
+   *
+   * 判据只看 `drag.isPressed` 与包围盒位移，不依赖任何窗口消息——与真实路径完全同源。
+   */
+  async runForeignDragTest(): Promise<void> {
+    this.syntheticControl = true;
+    try {
+      await this.runForeignDragSequence((message) => petLog(`外来拖动自测: ${message}`));
+    } finally {
+      this.syntheticControl = false;
+      this.syntheticPrimaryDown = false;
+    }
+  }
+
+  /** 外来拖动自测的主序列（见 `runForeignDragTest` 的说明） */
+  private async runForeignDragSequence(log: (message: string) => void): Promise<void> {
+    // 等宿主启动那阵忙完并落成穿透态（理由见 warmUpSyntheticInput）：
+    // 采样兜底的跟手走的是"宿主 16ms 采样 → 页面"，启动期这条线是堵的，
+    // 自测跑在堵着的窗口里就会得到"没位移"的假象（实测踩过：位移恒为 0）。
+    await this.warmUpSyntheticInput();
+    // 漫游会自己挪动宠物，把"位移≈0"这条判据搅乱：整个自测期间暂停动画链并放弃当前行走计划
+    this.walk = null;
+    this.chain.setPaused(true);
+    try {
+      const grabX = this.hitBox.x + this.hitBox.width / 2;
+      const grabY = this.hitBox.y + this.hitBox.height / 2;
+      const far: Vec2 = { x: this.boxOrigin.x - 600, y: this.boxOrigin.y - 400 };
+      const body: Vec2 = { x: this.boxOrigin.x + grabX, y: this.boxOrigin.y + grabY };
+      const boxAtStart = { ...this.boxOrigin };
+      const movesAtStart = this.windowStateEvents;
+
+      // ① 基线：远处 + 松开（这一帧把 prevEvaluatedPrimaryDown 落成 false）
+      await this.pumpSynthetic(far.x, far.y, false, 40);
+      // ② "在别处按下"：光标还在远处，按键翻成按下——按下沿属于别处，不该抓宠物
+      await this.pumpSynthetic(far.x, far.y, true, 40);
+      log(`阶段1: 远处按下（模拟别人家的拖动）按下中=${this.drag.isPressed}（期望 false）`);
+
+      // ③ 按住不放扫进身体（8 步 ≈ 每步 100px），再横向扫走 240px
+      for (let i = 1; i <= 8; i += 1) {
+        const p: Vec2 = {
+          x: far.x + ((body.x - far.x) * i) / 8,
+          y: far.y + ((body.y - far.y) * i) / 8,
+        };
+        await this.pumpSynthetic(p.x, p.y, true, 16);
+      }
+      const hijacked = this.drag.isPressed;
+      for (let i = 1; i <= 6; i += 1) {
+        await this.pumpSynthetic(body.x - i * 40, body.y + i * 8, true, 16);
+      }
+      // 等两帧，让"跟手 → set_pet_bounds → 宿主回传真实位置"这条链路走完（异步 IPC）
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+      const drift = Math.hypot(this.boxOrigin.x - boxAtStart.x, this.boxOrigin.y - boxAtStart.y);
+      const moves = this.windowStateEvents - movesAtStart;
+      log(
+        `阶段2: 按住扫过身体再横拉 240px → 按下中=${this.drag.isPressed}（期望 false）` +
+          `，宠物位移=${drift.toFixed(1)}px、窗口移动 ${moves} 次（均期望 ≈0：外来拖动不许带走宠物）`,
+      );
+
+      // ④ 松手后验证"真正的抓取"没被这道闸误伤（与 autotest=10 同一套起手序列）
+      await this.pumpSynthetic(body.x, body.y, false, 40);
+      let grabbed = false;
+      for (let attempt = 1; attempt <= 8 && !grabbed; attempt += 1) {
+        await this.pumpSynthetic(far.x, far.y, false, 16);
+        await this.pumpSynthetic(body.x, body.y, true, 16);
+        grabbed = this.drag.isPressed;
+      }
+      log(`阶段3: 真正的按下 → 按下中=${this.drag.isPressed}（期望 true）`);
+
+      const passed = !hijacked && drift < 2 && moves < 3 && grabbed;
+      log(
+        `结果: 外来拖动不抓=${!hijacked} 宠物位移=${drift.toFixed(1)}px 窗口移动=${moves} 次 ` +
+          `真按下可抓=${grabbed} —— ${passed ? '✓ 通过（外来拖动不会被当成抓住宠物）' : '✗ 回归！'}`,
+      );
+      // 收尾：把自测起手的那次按下放掉（正常路径是 DOM/看门狗在收）
+      if (this.drag.isPressed) this.drag.onPointerUp();
+    } finally {
+      this.chain.setPaused(false);
+    }
   }
 
   /**

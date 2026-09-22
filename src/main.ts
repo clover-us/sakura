@@ -137,6 +137,11 @@ async function bootstrap(): Promise<void> {
       // 对应 bug：`flying` 标志在"空中被抓住"路径漏复位 → 只有第一次能甩（见 runRepeatThrowTest）
       petLog('启动: 检测到 autotest=10，开始"重复甩出 / 空中重甩"自测');
       void runtime.runRepeatThrowTest();
+    } else if (autotest === '11') {
+      // 外来拖动自测：在别处按住左键再扫过宠物，宠物**不得**被带走；
+      // 对应 bug：桌面框选 / 别的窗口里拖选时，光标扫过宠物就把它一起拖走。
+      petLog('启动: 检测到 autotest=11，开始"外来拖动不得抓走宠物"自测');
+      void runtime.runForeignDragTest();
     } else if (autotest === '5') {
       // 漫游验证：漫游权重只有 5%，自动化时等到它太慢；这里确定性触发一次行走
       petLog('启动: 检测到 autotest=5，强制走一段以验证漫游');

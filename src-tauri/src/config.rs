@@ -1050,9 +1050,13 @@ mod tests {
     use super::*;
 
     /// 最小可用的 animations 段（测试夹具）：只放必需的池，避免每个用例重复长 JSON
+    ///
+    /// 注意 `"events":{}` 与 `"animationWeights"` 之间**必须有一个逗号**：
+    /// 少了它 `minimal_config` 拼出来的就不是合法 JSON，三个用到它的用例会全部挂在
+    /// "结构应可解析"上（本夹具曾经漏过，2026-09 在 MSVC 工具链上第一次跑通 `cargo test` 才暴露）。
     const MIN_ANIMATIONS: &str = r#""animations":{"idle":["待机"],"turn":[],"drag":[],"clicks":["点击"],
         "moves":{"default":{"minDist":10,"maxDist":20,"margin":5,"leadSec":0,"tailSec":0},"actions":[]},
-        "categories":[],"events":{}}"animationWeights":{"idle":10,"turn":5,"move":5}"#;
+        "categories":[],"events":{}},"animationWeights":{"idle":10,"turn":5,"move":5}"#;
 
     /// 拼一个最小合法配置（各用例只替换自己关心的片段）
     fn minimal_config(pets: &str) -> String {

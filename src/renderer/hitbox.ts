@@ -43,6 +43,37 @@ export function scaleHitBox(size: number, aspectRatio = CANVAS_HEIGHT / CANVAS_W
 }
 
 /**
+ * 身体（命中框）相对包围盒四边的**透明余量**（px）。
+ *
+ * 用途：本项目所有"边界"语义都按**身体**算，而不是按整个视频盒——
+ * 素材画布是 640×360，角色只占中间一块（`HIT_BOX`），左右各留 31% 宽的透明像素，
+ * 上下也各留一条。若按视频盒贴边，角色离屏幕边缘永远差着这一圈透明像素：
+ * 用户实测"想让它贴边，做不到"就是这么来的。
+ *
+ * 语义（与上游 `shared/motion.ts` 的 `sideAllow` 注释同源，"边界按身体贴边"）：
+ *   包围盒原点允许出屏 `insets.left/right/top/bottom`，**身体永远留在工作区内**——
+ *   既能让角色真的贴住屏幕边，又保证它任何时候都抓得到、看不丢。
+ */
+export interface BodyInsets {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** 由包围盒宽度算出身体余量（四边各自算，不假设左右对称） */
+export function bodyInsets(size: number, aspectRatio = CANVAS_HEIGHT / CANVAS_WIDTH): BodyInsets {
+  const box = scaleHitBox(size, aspectRatio);
+  const height = size * aspectRatio;
+  return {
+    left: box.x,
+    right: size - (box.x + box.width),
+    top: box.y,
+    bottom: height - (box.y + box.height),
+  };
+}
+
+/**
  * 判断窗口**本地坐标系**下的点是否落在身体命中区内。
  *
  * 本地坐标系 = 包围盒左上角为原点（`size × size*9/16`）。

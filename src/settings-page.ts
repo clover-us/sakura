@@ -589,7 +589,11 @@ function renderPetPage(pet: PetEntry, index: number): HTMLElement {
   const host = el('div', 'page-inner');
 
   // ---- 基本信息 ----
-  const basic = card('基本信息', '尺寸是包围盒宽度；角落与边距决定启动落点，「回到初始位置」用的是同一套语义。');
+  const basic = card(
+    '基本信息',
+    '尺寸是包围盒宽度；角落与边距决定启动落点，「回到初始位置」用的是同一套语义。' +
+      '边距量的是**角色身体**到屏幕边的距离：填 0 就是贴边（画布四周的透明像素允许露出屏幕外）。',
+  );
   const grid = el('div', 'grid');
   grid.appendChild(field('显示名', textInput(pet.name, (next) => {
     pet.name = next;

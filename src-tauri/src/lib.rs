@@ -495,6 +495,10 @@ fn spawn_poll_loop(app: AppHandle) {
                     at: started_at.elapsed().as_millis() as u64,
                     // 按键状态与位置同源采样：前端据此驱动/收尾拖拽状态机
                     primary_down,
+                    // "这一刻鼠标是不是被别的进程捕获着"（只有按下时才有意义）：
+                    // 前端用它拒绝"外来拖动"的采样起手（见 CursorSample::foreign_capture 的注释）。
+                    // 松开时直接给 false，省掉一次跨进程查询。
+                    foreign_capture: primary_down && display::foreign_mouse_capture(),
                 };
                 if log_cursor {
                     cursor_log_counter += 1;

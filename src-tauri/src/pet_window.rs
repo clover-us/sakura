@@ -314,6 +314,8 @@ fn create_one<R: Runtime>(
         Ok("9") => "&autotest=9",
         // 10 = 重复甩出 / 空中重甩，断言每次松手都真的起飞（回归网：曾经"只有首次能甩"）
         Ok("10") => "&autotest=10",
+        // 11 = 外来拖动自测：在别处按住左键再扫过宠物，宠物不得被带走
+        Ok("11") => "&autotest=11",
         _ => "",
     };
 
@@ -483,13 +485,46 @@ fn scale_hit_box(size: f64) -> Rect {
     }
 }
 
-/// 按角落 + 边距算出宠物包围盒左上角（屏幕坐标系）
+/// 身体（命中框）相对包围盒四边的透明余量（px，屏幕像素）。
+///
+/// **本项目所有边界语义都按它算**：包围盒 = 640×360 的素材画布，角色只占中间一块
+/// （`CANVAS_HIT_BOX`），左右各留 31% 宽的透明像素、上下也各留一条。按视频盒贴边的话，
+/// 角色离屏幕边永远差着这一圈透明像素——用户实测"想让它贴边，做不到"。
+/// 按身体算之后：包围盒允许越出这些余量，身体本身永不越界（始终抓得到、看不丢）。
+///
+/// 与前端 `src/renderer/hitbox.ts::bodyInsets` 是**同源实现**（两边都由 `CANVAS_HIT_BOX`
+/// 等比换算），不一致就会"启动落点"与"回到初始位置"对不上。
+struct BodyInsets {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+}
+
+/// 由包围盒宽度算出身体余量（几何换算只此一处）
+fn body_insets(size: f64) -> BodyInsets {
+    let height = size * ASPECT_RATIO;
+    let hit = scale_hit_box(size);
+    BodyInsets {
+        left: hit.x,
+        right: size - (hit.x + hit.width),
+        top: hit.y,
+        bottom: height - (hit.y + hit.height),
+    }
+}
+
+/// 按角落 + 边距算出宠物包围盒左上角（屏幕坐标系）。
+///
+/// **边距语义 = 身体到该屏工作区对应边的距离**（不是包围盒到边的距离）：
+/// `marginX = 0` 表示角色身体左侧（右下角时是右侧）正好贴住工作区边界。
+/// 前端"回到初始位置"（`runtime.ts::goHome`）用同一套换算，两处必须一致。
 fn anchor_box(pet: &PetEntry, area: &Rect) -> Vec2 {
     let height = pet.size * ASPECT_RATIO;
-    let left = area.x + f64::from(pet.position.margin_x);
-    let top = area.y + f64::from(pet.position.margin_y);
-    let right = area.right() - pet.size - f64::from(pet.position.margin_x);
-    let bottom = area.bottom() - height - f64::from(pet.position.margin_y);
+    let insets = body_insets(pet.size);
+    let left = area.x + f64::from(pet.position.margin_x) - insets.left;
+    let top = area.y + f64::from(pet.position.margin_y) - insets.top;
+    let right = area.right() - f64::from(pet.position.margin_x) - pet.size + insets.right;
+    let bottom = area.bottom() - f64::from(pet.position.margin_y) - height + insets.bottom;
     match pet.position.corner {
         Corner::TopLeft => Vec2 { x: left, y: top },
         Corner::TopRight => Vec2 { x: right, y: top },
@@ -504,19 +539,23 @@ fn anchor_box(pet: &PetEntry, area: &Rect) -> Vec2 {
 /// 这条不变量是"宠物在屏幕上动、页面只做窗口内布局"这一分工的基础：
 /// 前端每帧用 `包围盒 = 窗口原点 + 外扩余量` 反推命中位置，一旦相对关系变了就会整体错位。
 ///
-/// 约束的作用对象是**宠物包围盒**（要让它落在工作区内、不被任务栏挡住），
-/// 而不是窗口矩形——窗口允许略微越出工作区上/左边缘（那部分只是透明外扩余量，
-/// 不可见也不可交互）。早期版本按窗口矩形夹取，结果窗口被顶回工作区左上角，
-/// 宠物被整整推出去一个外扩余量（实测：配置 marginY=100 却出现在 210）。
+/// 约束的作用对象是**宠物身体**（要让它落在工作区内、不被任务栏挡住），
+/// 而不是窗口矩形、也不是整个包围盒——窗口与包围盒都允许越出工作区边界
+/// （越出去的部分只是透明外扩余量与角色周围的透明像素，不可见也不可交互）。
+/// 早期版本按窗口矩形夹取，结果窗口被顶回工作区左上角，宠物被整整推出去一个外扩余量
+/// （实测：配置 marginY=100 却出现在 210）；后来按包围盒夹取，则变成"角色永远贴不到边"
+/// ——角色只占画布中间一块，围着它的透明像素就是那道永远跨不过去的缝。
 /// 注意：参数名不能叫 `box`——那是 Rust 关键字（装箱类型 `Box` 的原始标识符）。
 fn anchored_window_origin(box_origin: Vec2, window_size: &Size, box_offset: &Vec2, area: &Rect) -> Vec2 {
-    // 包围盒原点在"工作区 − 包围盒尺寸"范围内的合法区间
+    // 包围盒尺寸（= 窗口尺寸扣掉外扩余量）
     let box_w = window_size.width - box_offset.x * 2.0;
     let box_h = window_size.height - box_offset.y * 2.0;
-    let min_box_x = area.x;
-    let max_box_x = (area.right() - box_w).max(area.x);
-    let min_box_y = area.y;
-    let max_box_y = (area.bottom() - box_h).max(area.y);
+    // 包围盒原点在"工作区 − 包围盒尺寸 ± 身体余量"范围内的合法区间
+    let insets = body_insets(box_w);
+    let min_box_x = area.x - insets.left;
+    let max_box_x = (area.right() - box_w + insets.right).max(min_box_x);
+    let min_box_y = area.y - insets.top;
+    let max_box_y = (area.bottom() - box_h + insets.bottom).max(min_box_y);
 
     let clamped_box = Vec2 {
         x: box_origin.x.clamp(min_box_x, max_box_x),
@@ -648,4 +687,93 @@ pub fn apply_bounds<R: Runtime>(runtime: &mut PetRuntime<R>, x: f64, y: f64, wid
 /// 日志：几何采样（节流由调用方负责）
 pub fn log_geometry_change(areas: &[Rect]) {
     eprintln!("[whale-pet] 显示器几何变化：{}", display::describe(areas));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Corner, PositionConfig};
+
+    /// 造一只用于几何计算的宠物（只填几何相关字段）
+    fn pet(size: f64, corner: Corner, margin_x: i32, margin_y: i32) -> PetEntry {
+        PetEntry {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            size,
+            idle: String::new(),
+            click: String::new(),
+            position: PositionConfig { corner, margin_x, margin_y },
+            animations: None,
+            animation_weights: None,
+        }
+    }
+
+    fn area_1920() -> Rect {
+        Rect { x: 0.0, y: 0.0, width: 1920.0, height: 1040.0 }
+    }
+
+    /// 身体余量必须等于画布里那一圈透明像素（`HIT_BOX` 等比换算），
+    /// 且"左余量 + 身体宽 + 右余量 = 包围盒宽"（上下同理）——这条不成立就说明换算式写错了。
+    #[test]
+    fn body_insets_match_canvas_transparent_padding() {
+        let size = 420.0;
+        let insets = body_insets(size);
+        let hit = scale_hit_box(size);
+        // 200/640*420 = 131.25；左右对称（HIT_BOX 水平居中）
+        assert!((insets.left - 131.25).abs() < 0.01, "left={}", insets.left);
+        assert!((insets.right - 131.25).abs() < 0.01, "right={}", insets.right);
+        // 50/360*236.25 = 32.81；下边 (360-335)/360*236.25 = 16.41
+        assert!((insets.top - 32.81).abs() < 0.01, "top={}", insets.top);
+        assert!((insets.bottom - 16.41).abs() < 0.01, "bottom={}", insets.bottom);
+        assert!((insets.left + hit.width + insets.right - size).abs() < 0.01);
+        assert!((insets.top + hit.height + insets.bottom - size * ASPECT_RATIO).abs() < 0.01);
+    }
+
+    /// **用户要的"贴边"**：边距 0 时身体的边缘正好压在工作区边上，
+    /// 而不是像旧语义那样"整个包围盒贴边、身体离边还有 131px"。
+    #[test]
+    fn zero_margin_puts_body_flush_to_work_area_edge() {
+        let area = area_1920();
+        let size = 420.0;
+        let hit = scale_hit_box(size);
+        let insets = body_insets(size);
+
+        let br = anchor_box(&pet(size, Corner::BottomRight, 0, 0), &area);
+        let body_right = br.x + insets.left + hit.width;
+        let body_bottom = br.y + insets.top + hit.height;
+        assert!((body_right - area.right()).abs() < 0.01, "右下角贴边: body_right={body_right}");
+        assert!((body_bottom - area.bottom()).abs() < 0.01, "右下角贴边: body_bottom={body_bottom}");
+
+        let tl = anchor_box(&pet(size, Corner::TopLeft, 0, 0), &area);
+        assert!((tl.x + insets.left - area.x).abs() < 0.01, "左上角贴边: body_left={}", tl.x + insets.left);
+        assert!((tl.y + insets.top - area.y).abs() < 0.01, "左上角贴边: body_top={}", tl.y + insets.top);
+
+        // 有边距时，边距量的是**身体**到边的距离（旧语义量的是包围盒）
+        let m = 24;
+        let tr = anchor_box(&pet(size, Corner::TopRight, m, m), &area);
+        let gap = area.right() - (tr.x + insets.left + hit.width);
+        assert!((gap - f64::from(m)).abs() < 0.01, "右边距={gap}");
+    }
+
+    /// 建窗时的夹取只保证"**身体**留在工作区内"：包围盒允许越出（越出去的是透明像素），
+    /// 但身体四边永远压不出工作区——既贴得到边，也不会被推到看不见的地方。
+    #[test]
+    fn anchored_origin_keeps_body_inside_work_area() {
+        let area = area_1920();
+        let size = 420.0;
+        let window = Size { width: size, height: (size * ASPECT_RATIO).round() };
+        let offset = Vec2 { x: 0.0, y: 0.0 };
+        let hit = scale_hit_box(size);
+        let insets = body_insets(size);
+
+        for wanted in [Vec2 { x: -4000.0, y: -4000.0 }, Vec2 { x: 4000.0, y: 4000.0 }] {
+            let origin = anchored_window_origin(wanted, &window, &offset, &area);
+            let body_left = origin.x + insets.left;
+            let body_top = origin.y + insets.top;
+            assert!(body_left >= area.x - 0.5, "身体左侧越界：{body_left}");
+            assert!(body_top >= area.y - 0.5, "身体上方越界：{body_top}");
+            assert!(body_left + hit.width <= area.right() + 0.5, "身体右侧越界");
+            assert!(body_top + hit.height <= area.bottom() + 0.5, "身体下方越界");
+        }
+    }
 }

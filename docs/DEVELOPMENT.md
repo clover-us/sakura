@@ -149,6 +149,8 @@ cargo run --example make-icon    # 重新生成 icons/ + src/assets/app-logo.png
 ```powershell
 $env:WHALE_PET_AUTOTEST = '1'; pnpm tauri dev   # 拖拽 + 甩抛全链路（弹簧滞后/初速/落地）
 $env:WHALE_PET_AUTOTEST = '2'; pnpm tauri dev   # "拖到命中区外松手"的失控场景（松手事件丢失的自愈）
+$env:WHALE_PET_AUTOTEST = '10'; pnpm tauri dev  # 重复甩出 / 空中重甩（每轮两次起飞）
+$env:WHALE_PET_AUTOTEST = '11'; pnpm tauri dev  # 在别处按住左键再扫过宠物：不许把宠物带走
 
 # 设置窗口：打开同一个 settings_window::open()，再由页面自己点按钮（页面 → 命令 → 写盘 → 重建）
 $env:WHALE_PET_DIAG_SETTINGS = 'save'           # 1 | save | autostart | addpet | delpet | ownbehaviour | nav:physics
@@ -343,6 +345,20 @@ Remove-Item src-tauri\target\release -Recurse -Force
     JSON 不存注释，而模板是带注释的；因此采用"备份上一版 + 文件开头写说明段"，并让"手工编辑 → 热重载"
     这条路继续可用。取舍理由见 `VERIFICATION.md` 9.4。
 
+16. **边界一律按"身体"算，不按整块视频盒**（`hitbox.ts::bodyInsets` / `pet_window.rs::body_insets`）
+    画布是 640×360，角色只占中间的 `HIT_BOX`，四周是透明像素。按盒子贴边 = 角色永远离屏幕边
+    差着那圈透明像素（左右各 31%，下 6.9%），用户实测"想贴边，贴不上"。所以松手夹取、抛掷反弹、
+    屏幕漫游、初始落点/回到初始位置四处的边界**全部**改成"身体贴边"：包围盒允许越出 `insets`，
+    身体永不越界（既贴得住边，也丢不了、抓得到）。**边距语义随之变成"身体到边的距离"**——
+    填 0 就是贴边；`reference/shared` 照旧零改动（抛掷那边靠"把工作区按 insets 外扩后喂进去"实现）。
+
+17. **采样兜底起手必须"亲眼看到按下的沿"**（`runtime.ts::evaluateInput`）
+    光标采样只能告诉页面"按键按着 + 光标在身体上"，它分不清"用户抓住了宠物"和"用户正在桌面框选 /
+    在别的窗口里拖选、光标路过宠物"。判据因此是三条与窗口消息无关的事实：
+    本帧主键**由松到按**、按下那一刻**没有别的进程捕获鼠标**（`GetGUIThreadInfo` 的 `hwndCapture`）、
+    窗口本帧开始时**还是穿透态**。少了前两条，宠物会被别人的拖动带走——第 20 节的"对话输入闸门"
+    只是这条通用规则当时的一个特例。
+
 ## 九、当前状态与已知限制
 
 **版本 v1.0.0**；里程碑：M0 技术验证 ✅ / M1 宠物本体 ✅ / M2 像个正经应用 ✅ / M2.5 外观与结构 ✅ /
@@ -357,7 +373,7 @@ M3 加分能力（LLM）✅ 基本完成 / M4 发布：NSIS + MSI 已产出并�
 | 限制 / 未验证 | 说明 | 计划 |
 | --- | --- | --- |
 | 右键菜单的生产版观感 | 根因已定位并修复（`style-src` 的 nonce 让运行期注入的菜单样式被拦，见 `VERIFICATION.md` 第 18 节），**但修法尚未在生产构建上回归** | 装一次新出的包确认白底面板 |
-| `cargo test` 跑不起来 | GNU 工具链下 libtest 可执行文件被加载器拒绝（`0xC0000139`，导入表与主程序一致，属环境问题）。改用 `cargo run --example logic-smoke` | 换 MSVC 工具链或在正常环境跑 |
+| `cargo test` 跑不起来 | GNU 工具链下 libtest 可执行文件被加载器拒绝（`0xC0000139`，导入表与主程序一致，属环境问题）。**MSVC 工具链下可跑**：`cargo test --lib` 20 项全过（2026-09-22 实测） | GNU 工具链仍在用 `cargo run --example logic-smoke` |
 | 仅 Windows | 透明窗/穿透/DPI 都按 Windows 验证 | macOS 需 `.mov` 素材 + 签名公证；Linux 合成器差异大 |
 | 多显示器跨屏抛掷未做观感回归 | 本机只有一块屏（几何/校验/放行逻辑已就位） | 需双屏机器回归一次 |
 | 高 DPI 未做观感回归 | 本机 DPR=1（100%） | 需 125%/150% 的机器各跑一次 |

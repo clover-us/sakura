@@ -26,6 +26,14 @@ export interface CursorFrame {
   at: number;
   /** 主键是否按下（全局按键状态，不依赖窗口消息——穿透期间也能拿到） */
   primaryDown: boolean;
+  /**
+   * 主键按下的同时，鼠标是否被**别的进程**的窗口捕获（`GetGUIThreadInfo` 的 `hwndCapture`）。
+   *
+   * 用途：区分"用户抓住了宠物"与"用户正在别的窗口里拖选、光标路过宠物"——
+   * 只有前者才允许采样兜底起手（见 runtime.ts 的 `evaluateInput`）。
+   * 宿主查询失败时为 `false`（= 放行），保证不会因为查询失败吞掉正常点击。
+   */
+  foreignCapture: boolean;
 }
 
 /** 帧回调类型 */
@@ -46,7 +54,12 @@ export class CursorChannel {
   constructor(
     private readonly listen: (
       event: string,
-      handler: (payload: { position: { x: number; y: number }; at: number; primaryDown: boolean }) => void,
+      handler: (payload: {
+        position: { x: number; y: number };
+        at: number;
+        primaryDown: boolean;
+        foreignCapture: boolean;
+      }) => void,
     ) => Promise<() => void>,
     private readonly onFrame: CursorFrameHandler,
   ) {}
@@ -61,6 +74,7 @@ export class CursorChannel {
         y: payload.position.y,
         at: payload.at,
         primaryDown: payload.primaryDown,
+        foreignCapture: payload.foreignCapture === true,
       };
       this.latest = frame;
       this.onFrame(frame);

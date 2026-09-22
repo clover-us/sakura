@@ -128,6 +128,41 @@ pub fn primary_button_down() -> bool {
     false
 }
 
+/// 主键按下的同时，鼠标是否被**别的进程**的窗口捕获（Windows：`GetGUIThreadInfo` 的 `hwndCapture`）。
+///
+/// 用途（配合前端 `runtime.ts::evaluateInput` 的采样兜底起手）：
+/// 全局采样只能看到"按键按着 + 光标在宠物身体上"，区分不了
+///   - "用户抓住了宠物"（此时鼠标捕获属于宠物自己的窗口——WebView2 在按下时 `SetCapture`）；
+///   - "用户正在桌面框选 / 在别的窗口里拖选，光标路过宠物"（捕获在对方进程手里）。
+/// 后者如果被当成前者，宠物就会跟着别人的拖动一起走（用户实测的 bug）。
+///
+/// 只查**前台窗口所属线程**（`idThread = 0` 的语义就是"前台窗口的活动线程"）：
+/// 这覆盖了绝大多数拖动场景，且**查询失败一律返回 `false`（放行）**——
+/// 这道闸只用来少挡一次误抓，绝不能因为查不到而把正常点击吞掉。
+#[cfg(windows)]
+pub fn foreign_mouse_capture() -> bool {
+    use win_key::{GetGUIThreadInfo, GetWindowThreadProcessId, GuiThreadInfo};
+    let mut info = GuiThreadInfo::default();
+    info.cb_size = std::mem::size_of::<GuiThreadInfo>() as u32;
+    // SAFETY: 只写入本函数栈上的 GUITHREADINFO（cbSize 已按结构体实际大小填好）
+    if unsafe { GetGUIThreadInfo(0, &mut info) } == 0 {
+        return false;
+    }
+    if info.hwnd_capture == 0 {
+        return false;
+    }
+    let mut pid: u32 = 0;
+    // SAFETY: hwnd 来自系统返回的捕获窗口句柄，pid 是本函数栈上的 u32
+    unsafe { GetWindowThreadProcessId(info.hwnd_capture, &mut pid) };
+    pid != 0 && pid != std::process::id()
+}
+
+/// 非 Windows 平台：不支持捕获查询（返回"没有外来捕获"= 放行）
+#[cfg(not(windows))]
+pub fn foreign_mouse_capture() -> bool {
+    false
+}
+
 #[cfg(windows)]
 mod win_key {
     /// 虚拟键码：鼠标主键（左键）
@@ -141,12 +176,44 @@ mod win_key {
         pub y: i32,
     }
 
+    /// 矩形（Win32 `RECT`；`GUITHREADINFO` 尾部需要它）
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct WinRect {
+        pub left: i32,
+        pub top: i32,
+        pub right: i32,
+        pub bottom: i32,
+    }
+
+    /// 线程 GUI 状态（Win32 `GUITHREADINFO`）
+    ///
+    /// 字段顺序/类型必须与 Win32 结构体逐字节一致：`cbSize` 由调用方填结构体大小，
+    /// 系统按它判断版本。这里只为读 `hwnd_capture`，其余字段照抄以保持布局。
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct GuiThreadInfo {
+        pub cb_size: u32,
+        pub flags: u32,
+        pub hwnd_active: isize,
+        pub hwnd_focus: isize,
+        pub hwnd_capture: isize,
+        pub hwnd_menu_owner: isize,
+        pub hwnd_move_size: isize,
+        pub hwnd_caret: isize,
+        pub rc_caret: WinRect,
+    }
+
     #[link(name = "user32")]
     extern "system" {
         /// 查询虚拟键状态；最高位为 1 表示当前按下
         pub fn GetAsyncKeyState(v_key: i32) -> i16;
         /// 取光标在**虚拟桌面**中的位置（物理像素）
         pub fn GetCursorPos(point: *mut Point) -> i32;
+        /// 取某个线程（传 0 = 前台窗口所属线程）的 GUI 状态，含"谁捕获了鼠标"
+        pub fn GetGUIThreadInfo(id_thread: u32, info: *mut GuiThreadInfo) -> i32;
+        /// 取窗口所属进程 id（用来判断捕获窗口是不是本进程的）
+        pub fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
     }
 }
 
