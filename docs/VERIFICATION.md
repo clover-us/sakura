@@ -3539,8 +3539,39 @@ UTF-8 脚本会按 ANSI(GBK) 解析 → 该脚本里的中文注释变成乱码�
 | 出包（exe + NSIS + MSI） | 已跑：`BUNDLE_EXIT=0`，2 个 bundle，见 26.1 的清单与 sha256 |
 | 图标链路（设计源 → exe → NSIS → MSI → 桌面快捷方式） | 五段全过，见 26.3 |
 | `WebView2Loader.dll` 进包 | 已核对：`installer.nsi`（`File /oname=WebView2Loader.dll`）与 `main.wxs`（`<File … WebView2Loader.dll>`）各命中 |
-| 提交推送 | 已推送 `a994c28`（本轮修复）到 `origin/main` |
-| 新安装包**装到本机** | **未做**：装包会覆盖 `D:\software\whale-pet` 并写注册表/卸载项，等用户确认 |
-| GitHub Release 是否更新 | **未做**：版本号仍是 1.0.0，Release 里那份是修复前的产物；要不要出 `v1.0.1`（或替换 v1.0.0 资产）待定 |
+| 提交推送 | 已推送 `a994c28`（第 25 节修复）与 `d5eb4f0`（本节）到 `origin/main`；本机直连 HTTPS 会 `TLS … unexpected eof`，带 `-c http.proxy=http://127.0.0.1:7897` 成功（偶发失败一次、重试即过） |
+| GitHub Release `v1.0.0` 的两个资产 | **已替换**成修复后的两份，正文同步更新（见 26.6） |
+| 新安装包**装到本机** | **用户选择自己双击装**，本轮不装（装包会覆盖 `D:\software\whale-pet` 并写注册表/卸载项） |
+
+## 26.6 替换 GitHub Release（v1.0.0）的两个资产
+
+用户选择"不升版本号、替换现有 v1.0.0 的资产"。走的是与 §23 同一条路（REST API + `curl.exe`，
+凭据取自 `git credential fill`，只在内存里、不落盘不打印），三条注意：
+
+- 同名资产**必须先 DELETE 再上传**，否则 `already_exists`；
+- `--data-binary` 会让 curl 自带 `Content-Type: application/x-www-form-urlencoded`，
+  必须显式 `-H "Content-Type: application/octet-stream"`（否则 GitHub 拒收）；
+- 本机到 GitHub 的链路偶发 `TLS … unexpected eof`：脚本对 DELETE 与上传都加了重试
+  （实测：NSIS 一次成功；MSI 的 DELETE 与上传各失败一次，重试即成功）。
+
+结果（GitHub 返回的 `digest` 与本地 `Get-FileHash` 逐位相同）：
+
+| 资产 | 新 asset id | 大小 | digest |
+| --- | --- | --- | --- |
+| `whale-pet_1.0.0_x64-setup.exe` | 581738207 | 61.75 MB | `sha256:5d308c9d…37f620c4` |
+| `whale-pet_1.0.0_x64_zh-CN.msi` | 581739613 | 62.83 MB | `sha256:422f89c4…4d95155d` |
+
+Release 正文也一起改了（旧正文里的 SHA256 与体积会与新资产对不上）：新增「资产替换记录
+（2026-09-22）」一节，写明本版比首发多的两条修复、对应提交 `d5eb4f0`，并更新校验段与体积。
+核对方式是把发布说明原文（`docs/releases/v1.0.0.md`）与 API 返回的 `body` **逐字符**比较：
+长度 1760 = 1760、**一致**、中文无乱码。
+
+> 踩坑留档：PS 5.1 下读 curl 落盘的响应必须显式按 UTF-8
+> （`[IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)`）——`Get-Content -Raw` 按 ANSI 读会把
+> UTF-8 中文变成乱码，`ConvertFrom-Json` 随即报 `应为":"或"}"`（那是编码问题，不是 GitHub 的问题）。
+>
+> tag 仍指向 `ef9f53c`（首发那次），而资产是 `d5eb4f0` 的构建——这是"不升版本号、只换资产"的
+> 必然结果，已写进 Release 正文，免得日后对不上。
+
 
 
