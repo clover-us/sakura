@@ -3471,4 +3471,76 @@ test result: ok. 20 passed; 0 failed
 | 贴边观感（角色贴住屏幕边好不好看） | **未截图**：需要用户把边距填 0 看一眼 |
 | 多屏 / 高 DPI 下的贴边 | **未回归**：本机单屏、DPR=1 |
 
+---
+
+# 26. 为第 25 节的修复出包（v1.0.0 + 补丁）并核验图标链路（2026-09-22）
+
+用户要求"打包并推送，注意桌面应用图标的修改"。打包走的是 §三 的便携工具链，本轮**只碰了两个
+与本机环境有关的坑**，其余产物与 1.0.0 同规格：
+
+## 26.1 出包命令（本机实录）
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force   # 本机执行策略为 Restricted
+. 'D:\programs\deepseek\sakura\scripts\activate-env.ps1'             # 或 . D:\tools\Tauri\env.ps1
+(Get-Item src-tauri\tauri.conf.json).LastWriteTime = Get-Date        # ★ 见 26.2
+& 'D:\tools\Tauri\nodejs\tauri.cmd' build --target x86_64-pc-windows-gnu
+```
+
+产物（`src-tauri\target\x86_64-pc-windows-gnu\release\`）：
+
+| 产物 | 大小 | SHA256 |
+| --- | --- | --- |
+| `whale-pet-desktop.exe`（免安装） | 6.6 MB | `f5a26172…45b4ca6` |
+| `bundle\nsis\whale-pet_1.0.0_x64-setup.exe` | 61.8 MB | `5d308c9d…37f620c4` |
+| `bundle\msi\whale-pet_1.0.0_x64_zh-CN.msi` | 62.8 MB | `422f89c4…4d95155d` |
+
+版本号仍是 **1.0.0**（本轮只有行为修复，没有改版本号）。
+
+## 26.2 ★ "改了图标但 exe 里还是旧图标"这条坑，这次怎么绕开的
+
+`icons/design/README.md` 末尾记着：**exe 的图标由构建脚本嵌入，而构建脚本只在
+`tauri.conf.json` 变化时重跑**——改完 `icon.ico` 直接 `cargo build`，exe 里仍是旧图。
+出包前因此**只碰了 `tauri.conf.json` 的修改时间**（不动内容，git 仍干净），强制构建脚本重跑一次。
+
+## 26.3 图标链路核验（五段，逐段都有证据）
+
+| 环节 | 方法 | 结果 |
+| --- | --- | --- |
+| 设计源 → 产物 | `design/app-icon-32.png` 与 `icons/32x32.png` 逐像素比 | 不同像素 **0 / 1024** |
+| 新 exe 里的图标 | `SHGetFileInfo` 取 exe 的 32/16 图标，与 `icons/32x32.png`、`design/app-icon-16.png` 比 | **0 / 1024**、**0 / 256** |
+| NSIS 安装器自身图标 | 同上，对 `setup.exe` | 32×32 与 `icons/32x32.png` **0 / 1024** |
+| MSI 的产品图标 | `WindowsInstaller` 读 `ARPPRODUCTICON` / `Icon` 表 | `ARPPRODUCTICON=ProductIcon`，流 63169 字节 = `icons/icon.ico` 的长度 |
+| MSI 里那个流是不是同一份 | 先按 4KB 扇区重组（MSI 的 OLE 扇区链不是顺序存放：块 0 在 65757184，块 1 在 65753088…），再比 sha256 | **2aba1072…962cb2b**，与 `icons/icon.ico` **逐字节一致** |
+| 本机已装的那份（9-21 装的 1.0.0） | 取 `D:\software\whale-pet\whale-pet-desktop.exe` 的 32×32 图标比对 | **0 / 1024**（桌面图标 = 该 exe 的图标，`whale-pet.lnk` 的 `IconLocation=,0`） |
+
+> 桌面图标那条链路值得写清楚：快捷方式用的是 `IconLocation=,0`（= 目标 exe 的图标），
+> 所以"桌面图标对不对"等价于"exe 里的图标对不对"；本轮 exe 与仓库图标逐像素相同，
+> 也就是说**不需要再动桌面图标**（§22.7 那次是换了图标才需要刷 Explorer 的图标缓存）。
+
+## 26.4 顺带修掉的一个真 bug：`scripts/activate-env.ps1` 缺 UTF-8 BOM
+
+本机 `pwsh` 实际是 **Windows PowerShell 5.1**（`5.1.26100.9444`），而 5.1 读**无 BOM** 的
+UTF-8 脚本会按 ANSI(GBK) 解析 → 该脚本里的中文注释变成乱码、直接抛
+`UnexpectedToken` 解析失败（§五 末尾那条"中文 .ps1 必须 BOM"的坑，这个文件是唯一漏网的）。
+修法：给它补 UTF-8 BOM（内容一字未改，diff 只有首行多出 BOM）。核对其余 6 个 `.ps1` 都有 BOM。
+
+另外两条与本轮出包有关的本机事实（都已在 §三 有记录，这里只留现场值）：
+
+- 直接 `git push` 走 HTTPS 会 `TLS connect error`；带代理
+  （`git -c http.proxy=http://127.0.0.1:7897 push`）成功：`4a4f3ed..a994c28 main -> main`；
+- `--target x86_64-pc-windows-gnu` 这个参数**不能省**：生成的 `installer.nsi` 与 `main.wxs`
+  里都能查到 `WebView2Loader.dll`（漏了它，装完启动会报找不到该 DLL，见 §三 坑 1）。
+
+## 26.5 本轮已验证 / 未验证
+
+| 项 | 状态 |
+| --- | --- |
+| 出包（exe + NSIS + MSI） | 已跑：`BUNDLE_EXIT=0`，2 个 bundle，见 26.1 的清单与 sha256 |
+| 图标链路（设计源 → exe → NSIS → MSI → 桌面快捷方式） | 五段全过，见 26.3 |
+| `WebView2Loader.dll` 进包 | 已核对：`installer.nsi`（`File /oname=WebView2Loader.dll`）与 `main.wxs`（`<File … WebView2Loader.dll>`）各命中 |
+| 提交推送 | 已推送 `a994c28`（本轮修复）到 `origin/main` |
+| 新安装包**装到本机** | **未做**：装包会覆盖 `D:\software\whale-pet` 并写注册表/卸载项，等用户确认 |
+| GitHub Release 是否更新 | **未做**：版本号仍是 1.0.0，Release 里那份是修复前的产物；要不要出 `v1.0.1`（或替换 v1.0.0 资产）待定 |
+
 

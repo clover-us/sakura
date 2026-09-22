@@ -52,15 +52,24 @@ pnpm tauri dev          # 开发模式（热更新；自动拉起 Vite，端口 
 # ① 把上游素材暂存进仓库 assets/（约 57 MB；素材不入库，见 .gitignore，克隆后要重新跑）
 pwsh -File scripts\import-animations.ps1 -Stage
 
-# ② 出包。**必须带 --target**（原因见下）：exe + NSIS 安装器 + MSI
+# ② 激活便携工具链（本机执行策略是 Restricted，必须先 Bypass；见 §一）
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+. scripts\activate-env.ps1
+
+# ③ 出包。**必须带 --target**（原因见下）：exe + NSIS 安装器 + MSI
 & 'D:\tools\Tauri\nodejs\tauri.cmd' build --target x86_64-pc-windows-gnu
 #   只出某一种：--bundles nsis / --bundles msi；只出 exe：--no-bundle
 
-# ③ 产物
+# ④ 产物
 #   src-tauri\target\x86_64-pc-windows-gnu\release\whale-pet-desktop.exe          免安装可执行
-#   src-tauri\target\x86_64-pc-windows-gnu\release\bundle\nsis\whale-pet_0.1.0_x64-setup.exe   62.3 MB（推荐）
-#   src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\whale-pet_0.1.0_x64_zh-CN.msi    63.6 MB
+#   src-tauri\target\x86_64-pc-windows-gnu\release\bundle\nsis\whale-pet_1.0.0_x64-setup.exe   61.8 MB（推荐）
+#   src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\whale-pet_1.0.0_x64_zh-CN.msi    62.8 MB
 ```
+
+> **改过图标后出包，必须让构建脚本重跑一次**：exe 的图标由 `tauri-build` 的构建脚本嵌入，
+> 而那个脚本**只在 `tauri.conf.json` 变化时重跑**——只跑 `cargo build` 的话 exe 里还是旧图标
+> （`icons/design/README.md` 末尾记着这条，2026-09-22 出包时用"碰一下 `tauri.conf.json`
+> 的修改时间"绕开；核验方法与证据见 `VERIFICATION.md` 26.3）。
 
 > 第 ② 步必须在**已激活环境**的会话里跑（见 §一）。系统里那个 `cargo`（`C:\Users\admin\.cargo`）
 > 只装了 msvc 目标，直接跑会报 `Target x86_64-pc-windows-gnu is not installed`
