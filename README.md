@@ -1,6 +1,6 @@
 # whale-pet desktop
 
-**把 [whale-pet](https://github.com/PC2005-cloud/whale-pet) 的桌宠做成一个独立的 Windows 桌面应用**（Tauri v2）：
+**一个独立的 Windows 桌面桌宠应用**（Tauri v2）：
 不依赖 DSH、不依赖浏览器，装完即用——透明置顶小窗 + 手绘透明动画 + 拖拽甩抛 + 点击 Q 弹 + 点击穿透。
 
 - 🐳 **手绘透明动画的完整行为链**：106 条 VP9-alpha `.webm`，待机 / 转向 / 屏幕漫游 / 按权重的随机动作分类，播完立即衔接
@@ -48,7 +48,7 @@
 | 素材归属 | 应用数据目录是唯一真相：随包素材只**补缺失**地释放，你自己放/删的动画不会被覆盖或复生 |
 | 配置 | 一个带注释的 `config.jsonc`，改完 1 秒内热重载；不合法就大声报错，绝不静默兜底 |
 
-**与上游的关系**：本仓库**只读取**上游 [`whale-pet`](https://github.com/PC2005-cloud/whale-pet)，
+**与上游的关系**：本仓库**只读取**上游 [`whale-pet`](https://github.com/PC2005-cloud/dsh-pet)，
 从不修改它。上游桌宠的纯逻辑层（物理弹簧、动画链抽签、移动几何、级联菜单的树与样式）
 以**逐字节零改动**的方式拷贝进 `reference/shared/`，所以手感与菜单行为与上游同源；
 拷了什么、为什么、怎么同步，见 [`docs/COPY-MANIFEST.md`](docs/COPY-MANIFEST.md)。
@@ -164,39 +164,15 @@ OpenCode `/zen/go/v1/usage`，六档余额动画）。Key 用 **DPAPI** 加密�
 M2.5 外观与结构 ✅ / M3 加分能力（LLM）✅ 基本完成；M4 发布：本机已能产出 NSIS + MSI，
 签名与自动更新未做。
 
-- 纯逻辑冒烟 **115 项断言全通过**（`cargo run --example logic-smoke`）；
-- 已知限制里对使用者最要紧的两条：**安装包未签名**（会提示「未知发布者」）、
-  **右键菜单在生产构建里的观感待回归**（根因已定位并修复，见 [验证记录第 18 节](docs/VERIFICATION.md)）；
-- 完整的状态、逐项限制与"未验证项"清单见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#九当前状态与已知限制)，
-  路线图见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
-
-> 这个项目的规矩是：**"完成了"必须有可复现的证据**——要么是日志/探针输出，要么是截图，
-> 要么是逐像素比对。做不到的项一律写进上面那份清单，而不是含糊过去。
-
 ---
 
-## 五、文档索引
+## 五、许可
 
-| 文档 | 内容 |
-| --- | --- |
-| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | **开发文档**：环境、跑起来、出包（含四个坑）、冒烟、诊断探针、配置、目录结构、设计要点、状态与已知限制 |
-| [`docs/COPY-MANIFEST.md`](docs/COPY-MANIFEST.md) | 与上游的关系：拷了哪些文件、为什么、基线与同步方式、哪些是"借鉴而非拷贝" |
-| [`docs/VERIFICATION.md`](docs/VERIFICATION.md) | **验证记录**：每个里程碑的实跑证据、踩过的坑与复盘、明确写出的"未验证项" |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | 里程碑与待办、待决的产品问题 |
-| [`docs/TAURI-CONFIG.md`](docs/TAURI-CONFIG.md) | `tauri.conf.json` 逐字段说明与 CSP 的每条理由 |
-| [`docs/SIGNING.md`](docs/SIGNING.md) | 代码签名：四条路各要多少钱、本机现状、拿到证书后怎么接进出包流程 |
-| [`docs/LLM.md`](docs/LLM.md) | AI 能力设计：provider 表、密钥存储、请求形状、记忆结构、交互形态 |
-| [`docs/screenshots/`](docs/screenshots/README.md) | 全部界面截图与抓取方法 |
-
----
-
-## 六、许可
-
-- 代码：MIT（与上游一致）
+- 代码：MIT
 - 素材（动画/提示词/源视频）：**允许开源使用，禁止商用**（上游约定，本应用沿用）
 - 界面图标形状：[Lucide](https://lucide.dev)（ISC 许可），已内联进 `src/tray-menu-page.ts` 与
   `src/settings-page.ts`
 - 应用图标：**用户提供的素材**（原子轨道图标，`src-tauri/icons/design/`；
   由 `cargo run --example make-icon` 栅格化）——来源与许可由项目所有者确认，仓库里只留了两套样式的原图
 
-> 本仓库**只读取**上游 [`PC2005-cloud/whale-pet`](https://github.com/PC2005-cloud/whale-pet)，从不修改它。
+> 本仓库**只读取**上游 [`PC2005-cloud/dsh-pet`](https://github.com/PC2005-cloud/dsh-pet)，从不修改它。
